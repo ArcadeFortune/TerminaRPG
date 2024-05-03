@@ -10,6 +10,7 @@ if (!process.stdin.isTTY) {
 const TILE_SIZE = 2;
 const COLORS = {
   reset: '\x1b[0m',
+  red: '\x1b[38;5;196m',
   player: '\x1b[48;5;21m',
   wall: '\x1b[48;5;15m\x1b[38;5;250m',
   ground: '\x1b[48;5;0m',
@@ -21,14 +22,13 @@ class Entity {
   constructor() {
     // this.event = new EventManager();
     this.is_entity = true
+    this.facing_direction = ''
+    this.damaged = false
   }
 }
 
 class Game {
   constructor(seed) {
-    this.ground = new Ground()
-    this.wall = new Wall()
-    this.player = new Player()
 
     const nanotimer = process.hrtime.bigint()
     this.event = new EventManager();
@@ -44,15 +44,13 @@ class Game {
       const row = []
       for (let j = 0; j < width; j++) {
         if (Math.random() > 0.8) {
-          row.push(this.wall)
+          row.push(new Wall())
         } else {
-          row.push(this.ground)
+          row.push(new Ground())
         }
       }
       map.push(row)
     }
-    //add player
-    map[Math.floor(height/2)][Math.floor(width/2)] = this.player
     return map
   }
   string_map(size_per_cell = 1) {
@@ -61,7 +59,7 @@ class Game {
     for (let i = 0; i < this.map.length; i++) {
       const row = []
       for (let j = 0; j < this.map[i].length; j++) {
-        row.push(this.map[i][j].toString().repeat(size_per_cell))
+        row.push(this.map[i][j].toString().repeat(size_per_cell+1))
       }
       for (let k = 0; k < size_per_cell; k++) {
         map.push(row)
@@ -69,7 +67,11 @@ class Game {
     }
     return map
   }
-  move(direction, entity=this.player) {
+  join(player) {
+    //spawn the player in the middle of the map
+    this.map[Math.floor(this.map.length/2)][Math.floor(this.map[0].length/2)] = player
+  }
+  move(direction, entity) {
     let found = false
     //move the player in the direction
     switch (direction) {
@@ -78,10 +80,11 @@ class Game {
           for (let j = 0; j < this.map[i].length; j++) {
             if (this.map[i][j] === entity) {
               found = true
+              //check for the boundries
               if (i-1 >= 0) {
-                //check for the boundries
+                //only if the player is stronger than the cell
                 if (this.map[i-1][j].strength < this.map[i][j].strength) {
-                  //only if the player is stronger than the cell
+                  this.map[i-1][j].damaged = false
                   const temp = this.map[i][j]
                   this.map[i][j] = this.map[i-1][j]
                   this.map[i-1][j] = temp
@@ -98,10 +101,11 @@ class Game {
           for (let j = 0; j < this.map[i].length; j++) {
             if (this.map[i][j] === entity) {
               found = true
+              //check for the boundries
               if (i+1 < this.map.length) {
-                //check for the boundries
+                //only if the player is stronger than the cell
                 if (this.map[i+1][j].strength < this.map[i][j].strength) {
-                  //only if the player is stronger than the cell
+                  this.map[i+1][j].damaged = false
                   const temp = this.map[i][j]
                   this.map[i][j] = this.map[i+1][j]
                   this.map[i+1][j] = temp
@@ -118,10 +122,11 @@ class Game {
           for (let j = 0; j < this.map[i].length; j++) {
             if (this.map[i][j] === entity) {
               found = true
+              //check for the boundries
               if (j-1 >= 0) {
-                //check for the boundries
+                //only if the player is stronger than the cell
                 if (this.map[i][j-1].strength < this.map[i][j].strength) {
-                  //only if the player is stronger than the cell
+                  this.map[i][j-1].damaged = false
                   const temp = this.map[i][j]
                   this.map[i][j] = this.map[i][j-1]
                   this.map[i][j-1] = temp
@@ -138,10 +143,11 @@ class Game {
           for (let j = 0; j < this.map[i].length; j++) {
             if (this.map[i][j] === entity) {
               found = true
+              //check for the boundries
               if (j+1 < this.map[i].length) {
-                //check for the boundries
+                //only if the player is stronger than the cell
                 if (this.map[i][j+1].strength < this.map[i][j].strength) {
-                  //only if the player is stronger than the cell
+                  this.map[i][j+1].damaged = false
                   const temp = this.map[i][j]
                   this.map[i][j] = this.map[i][j+1]
                   this.map[i][j+1] = temp
@@ -156,8 +162,94 @@ class Game {
       default:
         break;
     }
-    if (found) game.event.emit('new_frame')
-    return true
+    if (found) this.event.emit('new_frame')
+    else this.event.emit('error', 'Entity not found')
+  }
+  attack(direction, entity) {
+    let found = false
+    //move the player in the direction
+    switch (direction) {
+      case 'N':
+        for (let i = 0; i < this.map.length; i++) {
+          for (let j = 0; j < this.map[i].length; j++) {
+            if (this.map[i][j] === entity) {
+              found = true
+              //check for the boundries
+              if (i-1 >= 0) {
+                //apply 'damaged' to entity
+                let enemy = this.map[i-1][j]
+                enemy.strength -= entity.strength
+                enemy.damaged = true
+                setTimeout(() => enemy.damaged = false, 400)
+              }
+            }
+            if (found) break;
+          }
+          if (found) break;
+        }
+        break;
+      case 'S':
+        for (let i = 0; i < this.map.length; i++) {
+          for (let j = 0; j < this.map[i].length; j++) {
+            if (this.map[i][j] === entity) {
+              found = true
+              //check for the boundries
+              if (i+1 < this.map.length) {
+                //apply 'damaged' to entity
+                let enemy = this.map[i+1][j]
+                enemy.strength -= entity.strength
+                enemy.damaged = true
+                setTimeout(() => enemy.damaged = false, 400)
+              }
+            }
+            if (found) break;
+          }
+          if (found) break;
+        }
+        break;
+      case 'W':
+        for (let i = 0; i < this.map.length; i++) {
+          for (let j = 0; j < this.map[i].length; j++) {
+            if (this.map[i][j] === entity) {
+              found = true
+              //check for the boundries
+              if (j-1 >= 0) {
+                //apply 'damaged' to entity
+                let enemy = this.map[i][j-1]
+                enemy.strength -= entity.strength
+                enemy.damaged = true
+                setTimeout(() => enemy.damaged = false, 400)
+              }
+            }
+            if (found) break;
+          }
+          if (found) break;
+        }
+        break;
+      case 'E':
+        for (let i = 0; i < this.map.length; i++) {
+          for (let j = 0; j < this.map[i].length; j++) {
+            if (this.map[i][j] === entity) {
+              found = true
+              //check for the boundries
+              if (j+1 < this.map[i].length) {
+                //apply 'damaged' to entity
+                let enemy = this.map[i][j+1]
+                enemy.strength -= entity.strength
+                enemy.damaged = true
+                setTimeout(() => enemy.damaged = false, 400)
+              }
+            }
+            if (found) break;
+          }
+          if (found) break;
+        }
+        break;
+      default:
+        break;
+    }
+    if (found) this.event.emit('new_frame')
+    else this.event.emit('error', 'Player not found')
   }
 }
 
@@ -169,6 +261,39 @@ class Player extends Entity {
   toString() {
     return COLORS.player + ' ' + COLORS.reset
   }
+  action(key) {
+    switch (key.name) {
+      case 'w':
+        this.facing_direction = 'N'
+        game.move(this.facing_direction, this)
+        break;    
+      case 's':
+        this.facing_direction = 'S'
+        game.move(this.facing_direction, this)
+        break;
+      case 'a':
+        this.facing_direction = 'W'
+        game.move(this.facing_direction, this)
+        break;
+      case 'd':
+        this.facing_direction = 'E'
+        game.move(this.facing_direction, this)
+        break;
+      case 'space':
+        // display.show(game.string_map(TILE_SIZE), `attacking ${this.facing_direction}`)
+        game.attack(this.facing_direction,this)
+        break;
+      case 'x':
+        display.show(game.string_map(TILE_SIZE), 'test')
+        break
+      default:
+        display.show(game.string_map(TILE_SIZE), `Unknown key [${JSON.stringify(key.sequence)}]`)
+        break;
+    }
+  }
+  move(direction) {
+    game.move(direction, this)
+  }
 }
 
 class Ground extends Entity {
@@ -177,14 +302,14 @@ class Ground extends Entity {
     this.strength = 0;
   }
   toString() {
-    return COLORS.ground + ' ' + COLORS.reset
+    return COLORS.ground + ((this.damaged ? COLORS.red + '\\' : ' ')) + COLORS.reset
   }
 }
 
 class Wall extends Entity {
   constructor() {
     super()
-    this.strength = 1000;
+    this.strength = Infinity;
   }
   toString() {
     return COLORS.wall + '#' + COLORS.reset
@@ -193,15 +318,10 @@ class Wall extends Entity {
 
 class Display {
   constructor() {
-    this.text = ''
     this.is_in_intro = false
   }
   async intro(message) {
     this.is_in_intro = true
-    game.event.once('in_game', () => {
-      // console.clear();
-      this.is_in_intro = false
-    })
     let displayedString = []
     for (let i = 0; i < message.length; i++) {
       if (!this.is_in_intro) {
@@ -215,14 +335,17 @@ class Display {
     }
     this.is_in_intro = false
   }
-  show(data, info = '') {
+  show(data, ...info) {
     console.clear();
     //data is a 2 dimentional array
     for (let i = 0; i < data.length; i++) {
       console.log(data[i].join(''));
     }
-    console.log(info);
-    console.log(this.text);
+    //info is an array of strings
+    for (let i = 0; i < info.length; i++) {
+      if (typeof info[i] === 'object') console.table(info[i]);
+      else console.log(info[i]);
+    }
   }
 }
 
@@ -239,15 +362,20 @@ rl.prompt();
 
 const game = new Game()
 const display = new Display()
+const player = new Player()
+
 game.event.on('new_frame', () => {
   //repaint the whole screen when a new frame is emitted (for example a value is changed)
   display.show(game.string_map(TILE_SIZE))
 })
+game.event.on('error', (message) => {
+  display.show(game.string_map(TILE_SIZE), message)
+})
 
 display.intro('Welcome to my game\nPress enter to start\nPress any other key to exit\n')
 
-process.stdin.setRawMode( true );
-process.stdin.setEncoding( 'utf8' );
+process.stdin.setRawMode(true);
+process.stdin.setEncoding('utf8');
 
 game.event.on('in_game', () => {
   display.show(game.string_map(TILE_SIZE))
@@ -268,24 +396,9 @@ game.event.on('in_game', () => {
     if (key.ctrl && key.name === 'c') {
       process.exit();
     } else {
-      switch (str) {
-        case 'w':
-          game.move('N')
-          break;    
-        case 's':
-          game.move('S')
-          break;
-        case 'a':
-          game.move('W')
-          break;
-        case 'd':
-          game.move('E')
-          break;
-        default:
-          break;
-      }
       readline.clearLine(process.stdout, -1);
       readline.moveCursor(process.stdout, -1);
+      player.action(key)
     }
   });
 })
@@ -296,7 +409,10 @@ process.stdin.on('keypress', (str, key) => {
   readline.moveCursor(process.stdout, -1);
   if (display.is_in_intro) return display.is_in_intro = false;
   if (key.name === 'return') {
+    //start game
     process.stdin.removeAllListeners('keypress')
+    display.is_in_intro = false;
+    game.join(player)
     game.event.emit('in_game')
   } else {
     process.exit();
