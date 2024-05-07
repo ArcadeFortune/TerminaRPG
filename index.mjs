@@ -69,180 +69,122 @@ class Game {
   }
   join(player) {
     //spawn the player in the middle of the map
-    this.map[Math.floor(this.map.length/2)][Math.floor(this.map[0].length/2)] = player
+    const y = Math.floor(this.map.length/2)
+    const x = Math.floor(this.map[0].length/2)
+    this.map[y][x] = player
+    player.position = {x, y}
   }
   move(direction, entity) {
-    let found = false
+    let found = true
+    if (!entity.position) return
+    const i = entity.position.y
+    const j = entity.position.x
     //move the player in the direction
     switch (direction) {
       case 'N':
-        for (let i = 0; i < this.map.length; i++) {
-          for (let j = 0; j < this.map[i].length; j++) {
-            if (this.map[i][j] === entity) {
-              found = true
-              //check for the boundries
-              if (i-1 >= 0) {
-                //only if the player is stronger than the cell
-                if (this.map[i-1][j].strength < this.map[i][j].strength) {
-                  this.map[i-1][j].damaged = false
-                  const temp = this.map[i][j]
-                  this.map[i][j] = this.map[i-1][j]
-                  this.map[i-1][j] = temp
-                }
-              }
-            }
-            if (found) break;
+        //check for the boundries
+        if (i-1 >= 0) {
+          //only if the player is stronger than the cell
+          if (this.map[i-1][j].strength < this.map[i][j].strength) {
+            this.map[i][j].position.y--
+            this.map[i-1][j].damaged = false
+            const temp = this.map[i][j]
+            this.map[i][j] = this.map[i-1][j]
+            this.map[i-1][j] = temp
           }
-          if (found) break;
         }
         break;
       case 'S':
-        for (let i = 0; i < this.map.length; i++) {
-          for (let j = 0; j < this.map[i].length; j++) {
-            if (this.map[i][j] === entity) {
-              found = true
-              //check for the boundries
-              if (i+1 < this.map.length) {
-                //only if the player is stronger than the cell
-                if (this.map[i+1][j].strength < this.map[i][j].strength) {
-                  this.map[i+1][j].damaged = false
-                  const temp = this.map[i][j]
-                  this.map[i][j] = this.map[i+1][j]
-                  this.map[i+1][j] = temp
-                }
-              }
-            }
-            if (found) break;
+        //check for the boundries
+        if (i+1 < this.map.length) {
+          //only if the player is stronger than the cell
+          if (this.map[i+1][j].strength < this.map[i][j].strength) {
+            this.map[i][j].position.y++
+            this.map[i+1][j].damaged = false
+            const temp = this.map[i][j]
+            this.map[i][j] = this.map[i+1][j]
+            this.map[i+1][j] = temp
           }
-          if (found) break;
         }
         break;
       case 'W':
-        for (let i = 0; i < this.map.length; i++) {
-          for (let j = 0; j < this.map[i].length; j++) {
-            if (this.map[i][j] === entity) {
-              found = true
-              //check for the boundries
-              if (j-1 >= 0) {
-                //only if the player is stronger than the cell
-                if (this.map[i][j-1].strength < this.map[i][j].strength) {
-                  this.map[i][j-1].damaged = false
-                  const temp = this.map[i][j]
-                  this.map[i][j] = this.map[i][j-1]
-                  this.map[i][j-1] = temp
-                }
-              }
-            }
-            if (found) break;
+        //check for the boundries
+        if (j-1 >= 0) {
+          //only if the player is stronger than the cell
+          if (this.map[i][j-1].strength < this.map[i][j].strength) {
+            this.map[i][j].position.x--
+            this.map[i][j-1].damaged = false
+            const temp = this.map[i][j]
+            this.map[i][j] = this.map[i][j-1]
+            this.map[i][j-1] = temp
           }
-          if (found) break;
         }
         break;
       case 'E':
-        for (let i = 0; i < this.map.length; i++) {
-          for (let j = 0; j < this.map[i].length; j++) {
-            if (this.map[i][j] === entity) {
-              found = true
-              //check for the boundries
-              if (j+1 < this.map[i].length) {
-                //only if the player is stronger than the cell
-                if (this.map[i][j+1].strength < this.map[i][j].strength) {
-                  this.map[i][j+1].damaged = false
-                  const temp = this.map[i][j]
-                  this.map[i][j] = this.map[i][j+1]
-                  this.map[i][j+1] = temp
-                }
-              }
-            }
-            if (found) break;
+        //check for the boundries
+        if (j+1 < this.map[i].length) {
+          //only if the player is stronger than the cell
+          if (this.map[i][j+1].strength < this.map[i][j].strength) {
+            this.map[i][j].position.x++
+            this.map[i][j+1].damaged = false
+            const temp = this.map[i][j]
+            this.map[i][j] = this.map[i][j+1]
+            this.map[i][j+1] = temp
           }
-          if (found) break;
         }
         break;
       default:
+        found = false
         break;
     }
     if (found) this.event.emit('new_frame')
     else this.event.emit('error', 'Entity not found')
   }
   attack(direction, entity) {
-    let found = false
+    let found = true
+    if (!entity.position) return
+    const i = entity.position.y
+    const j = entity.position.x
     //move the player in the direction
     switch (direction) {
       case 'N':
-        for (let i = 0; i < this.map.length; i++) {
-          for (let j = 0; j < this.map[i].length; j++) {
-            if (this.map[i][j] === entity) {
-              found = true
-              //check for the boundries
-              if (i-1 >= 0) {
-                //apply 'damaged' to entity
-                let enemy = this.map[i-1][j]
-                enemy.strength -= entity.strength
-                enemy.damaged = true
-                setTimeout(() => enemy.damaged = false, 400)
-              }
-            }
-            if (found) break;
-          }
-          if (found) break;
+        //check for the boundries
+        if (i-1 >= 0) {
+          //apply 'damaged' to entity
+          let enemy = this.map[i-1][j]
+          enemy.strength -= entity.strength
+          enemy.damaged = true
+          setTimeout(() => enemy.damaged = false, 400)
         }
         break;
       case 'S':
-        for (let i = 0; i < this.map.length; i++) {
-          for (let j = 0; j < this.map[i].length; j++) {
-            if (this.map[i][j] === entity) {
-              found = true
-              //check for the boundries
-              if (i+1 < this.map.length) {
-                //apply 'damaged' to entity
-                let enemy = this.map[i+1][j]
-                enemy.strength -= entity.strength
-                enemy.damaged = true
-                setTimeout(() => enemy.damaged = false, 400)
-              }
-            }
-            if (found) break;
-          }
-          if (found) break;
+        //check for the boundries
+        if (i+1 < this.map.length) {
+          //apply 'damaged' to entity
+          let enemy = this.map[i+1][j]
+          enemy.strength -= entity.strength
+          enemy.damaged = true
+          setTimeout(() => enemy.damaged = false, 400)
         }
         break;
       case 'W':
-        for (let i = 0; i < this.map.length; i++) {
-          for (let j = 0; j < this.map[i].length; j++) {
-            if (this.map[i][j] === entity) {
-              found = true
-              //check for the boundries
-              if (j-1 >= 0) {
-                //apply 'damaged' to entity
-                let enemy = this.map[i][j-1]
-                enemy.strength -= entity.strength
-                enemy.damaged = true
-                setTimeout(() => enemy.damaged = false, 400)
-              }
-            }
-            if (found) break;
-          }
-          if (found) break;
+        //check for the boundries
+        if (j-1 >= 0) {
+          //apply 'damaged' to entity
+          let enemy = this.map[i][j-1]
+          enemy.strength -= entity.strength
+          enemy.damaged = true
+          setTimeout(() => enemy.damaged = false, 400)
         }
         break;
       case 'E':
-        for (let i = 0; i < this.map.length; i++) {
-          for (let j = 0; j < this.map[i].length; j++) {
-            if (this.map[i][j] === entity) {
-              found = true
-              //check for the boundries
-              if (j+1 < this.map[i].length) {
-                //apply 'damaged' to entity
-                let enemy = this.map[i][j+1]
-                enemy.strength -= entity.strength
-                enemy.damaged = true
-                setTimeout(() => enemy.damaged = false, 400)
-              }
-            }
-            if (found) break;
-          }
-          if (found) break;
+        //check for the boundries
+        if (j+1 < this.map[i].length) {
+          //apply 'damaged' to entity
+          let enemy = this.map[i][j+1]
+          enemy.strength -= entity.strength
+          enemy.damaged = true
+          setTimeout(() => enemy.damaged = false, 400)
         }
         break;
       default:
@@ -257,6 +199,7 @@ class Player extends Entity {
   constructor() {
     super()
     this.strength = 1;
+    this.position = {}
   }
   toString() {
     return COLORS.player + ' ' + COLORS.reset
@@ -279,15 +222,20 @@ class Player extends Entity {
         this.facing_direction = 'E'
         game.move(this.facing_direction, this)
         break;
-      case 'space':
-        // display.show(game.string_map(TILE_SIZE), `attacking ${this.facing_direction}`)
-        game.attack(this.facing_direction,this)
+      case 'up':
+        game.attack('N', this)
         break;
-      case 'x':
-        display.show(game.string_map(TILE_SIZE), 'test')
-        break
+      case 'down':
+        game.attack('S', this)
+        break;
+      case 'left':
+        game.attack('W', this)
+        break;
+      case 'right':
+        game.attack('E', this)
+        break;
       default:
-        display.show(game.string_map(TILE_SIZE), `Unknown key [${JSON.stringify(key.sequence)}]`)
+        display.show(game.string_map(TILE_SIZE), `Unknown key [${JSON.stringify(key.name)}]`)
         break;
     }
   }
@@ -295,6 +243,44 @@ class Player extends Entity {
     game.move(direction, this)
   }
 }
+
+// class Backpack {
+//   constructor() {
+//     this.items = []
+//   }
+
+//   add(item) {
+//     this.items.push(item)
+//   }
+
+//   remove(item) {
+//     this.items = this.items.filter(i => i !== item)
+//   }
+
+//   toString() {
+//     const counts = {};
+//     this.items.forEach(item => {
+//       const value = item.Type;
+//       counts[value] = (counts[value] || 0) + 1;
+//     });
+//     let backpack_string = {}
+//     for (let i = 0; i < this.items.length; i++) {
+//       backpack_string[this.items[i].Type] = 
+//       // this.items[i]
+//       {'Strength': this.items[i].Strength, 'Description': this.items[i].Description}
+//     }
+//     return backpack_string
+//   }
+// }
+
+// class Item {
+//   constructor(type, strength=100, ability, description) {
+//     this.Type = type
+//     this.Strength = strength
+//     this.Ability = ability
+//     this.Description = description
+//   }
+// }
 
 class Ground extends Entity {
   constructor() {
@@ -319,6 +305,7 @@ class Wall extends Entity {
 class Display {
   constructor() {
     this.is_in_intro = false
+    this.to_log = ''
   }
   async intro(message) {
     this.is_in_intro = true
@@ -335,6 +322,9 @@ class Display {
     }
     this.is_in_intro = false
   }
+  log(data) {
+    this.to_log = data
+  }
   show(data, ...info) {
     console.clear();
     //data is a 2 dimentional array
@@ -346,6 +336,7 @@ class Display {
       if (typeof info[i] === 'object') console.table(info[i]);
       else console.log(info[i]);
     }
+    console.log(this.to_log);
   }
 }
 
@@ -379,18 +370,6 @@ process.stdin.setEncoding('utf8');
 
 game.event.on('in_game', () => {
   display.show(game.string_map(TILE_SIZE))
-
-// //refreshing with 30fps
-// let i = 0;
-// const interval = setInterval(() => {
-//   // console.clear();
-//   display.show(game.string_map())
-//   console.log(i);
-//   i++;
-//   if (i > 10) {
-//     clearInterval(interval);
-//   }
-// }, 1000/30);
 
   process.stdin.on('keypress', (str, key) => {
     if (key.ctrl && key.name === 'c') {
