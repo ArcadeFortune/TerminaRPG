@@ -8,11 +8,14 @@ if (!process.stdin.isTTY) {
 
 //constants
 const TILE_SIZE = 2;
+const INVINCIBILITY_FRAMES = 300
 const COLORS = {
   reset: '\x1b[0m',
   red: '\x1b[38;5;196m',
   player: '\x1b[48;5;21m',
+  zombie: '\x1b[48;5;34m',
   wall: '\x1b[48;5;15m\x1b[38;5;250m',
+  wall_hit: '\x1b[48;5;15m\x1b[38;5;253m',
   ground: '\x1b[48;5;0m',
 };
 
@@ -46,7 +49,12 @@ class Game {
         if (Math.random() > 0.8) {
           row.push(new Wall())
         } else {
-          row.push(new Ground())
+          //spawn zombie
+          if (Math.random() > 0.9) {
+            row.push(new Zombie(j, i))
+          } else {
+            row.push(new Ground())
+          }
         }
       }
       map.push(row)
@@ -145,53 +153,53 @@ class Game {
     if (!entity.position) return
     const i = entity.position.y
     const j = entity.position.x
+    let enemy;
     //move the player in the direction
     switch (direction) {
       case 'N':
         //check for the boundries
-        if (i-1 >= 0) {
-          //apply 'damaged' to entity
-          let enemy = this.map[i-1][j]
-          enemy.strength -= entity.strength
-          enemy.damaged = true
-          setTimeout(() => enemy.damaged = false, 400)
-        }
+        if (i-1 >= 0) enemy = this.map[i-1][j]
+        else found = false
         break;
       case 'S':
         //check for the boundries
-        if (i+1 < this.map.length) {
-          //apply 'damaged' to entity
-          let enemy = this.map[i+1][j]
-          enemy.strength -= entity.strength
-          enemy.damaged = true
-          setTimeout(() => enemy.damaged = false, 400)
-        }
+        if (i+1 < this.map.length) enemy = this.map[i+1][j]
+        else found = false
         break;
       case 'W':
         //check for the boundries
-        if (j-1 >= 0) {
-          //apply 'damaged' to entity
-          let enemy = this.map[i][j-1]
-          enemy.strength -= entity.strength
-          enemy.damaged = true
-          setTimeout(() => enemy.damaged = false, 400)
-        }
+        if (j-1 >= 0) enemy = this.map[i][j-1]
+        else found = false
         break;
       case 'E':
         //check for the boundries
-        if (j+1 < this.map[i].length) {
-          //apply 'damaged' to entity
-          let enemy = this.map[i][j+1]
-          enemy.strength -= entity.strength
-          enemy.damaged = true
-          setTimeout(() => enemy.damaged = false, 400)
-        }
+        if (j+1 < this.map[i].length) enemy = this.map[i][j+1]
+        else found = false
         break;
       default:
+        found = false
         break;
-    }
-    if (found) this.event.emit('new_frame')
-    else this.event.emit('error', 'Player not found')
+      }
+
+      if (!found) return this.event.emit('error', 'nt going out of bounds')
+      
+      //apply 'damaged' to entity only if it is not in cooldown
+      if (enemy.damaged === false) {
+        //if entity would die...
+        if (enemy.strength <= 1 && !(enemy instanceof Ground)) {
+          //...kill them
+          this.map[enemy.position.y][enemy.position.x] = new Ground()
+        } else {
+          //..else just damage them
+          enemy.strength -= entity.strength
+          enemy.damaged = true
+          setTimeout(() => {
+            enemy.damaged = false
+            this.event.emit('new_frame')
+          }, INVINCIBILITY_FRAMES)
+        }
+        this.event.emit('new_frame')
+      }
   }
 }
 
@@ -244,6 +252,17 @@ class Player extends Entity {
   }
 }
 
+class Zombie extends Entity {
+  constructor(x, y) {
+    super()
+    this.strength = 3;
+    this.position = {x, y}
+  }
+  toString() {
+    return ((this.damaged ? COLORS.red + COLORS.zombie: COLORS.zombie)) + '$' + COLORS.reset
+  }
+}
+
 // class Backpack {
 //   constructor() {
 //     this.items = []
@@ -285,7 +304,7 @@ class Player extends Entity {
 class Ground extends Entity {
   constructor() {
     super()
-    this.strength = 0;
+    this.strength = -Infinity;
   }
   toString() {
     return COLORS.ground + ((this.damaged ? COLORS.red + '\\' : ' ')) + COLORS.reset
@@ -298,7 +317,7 @@ class Wall extends Entity {
     this.strength = Infinity;
   }
   toString() {
-    return COLORS.wall + '#' + COLORS.reset
+    return (this.damaged ? COLORS.wall_hit : COLORS.wall) + '#' + COLORS.reset
   }
 }
 
