@@ -275,7 +275,13 @@ class Game {
     this.players.push(player)
     this.map[y][x] = player
     player.position = {x, y}
-    player.number = this.players.length
+        
+    for (let n = 1; n <= this.players.length + 1; n++) {
+      if (this.players.every((player) => player.number !== n)) {
+        player.number = n
+        break
+      }
+    }
     
     //notify the other players
     this.event.emit('log', `Player ${player} joined`)
@@ -738,14 +744,8 @@ function start_game() {
     //we set up events to send information towards that socket
     //this whole game works on events
     game.event.on('happening', (happening) => {
-      // display.log('===== happpen')
-      // display.log(Math.random())
-      // game.event.listeners
-      // game.event.removeListener('log')
-      // game.event.removeListener('happening', )
-      // display.log(socket?.player?.number)
-      // display.log(socket.player.number)
-      
+      //after a socket disconnects, all the events will still be emitted
+      if (!socket.player) return
       //on death occastion,
       if (happening.type === 'death') {
         //only send that information to the dead client
@@ -757,6 +757,7 @@ function start_game() {
       }
     })
     game.event.on('log', (message_to_log) => {
+      if (!socket.player) return
       socket.write(JSON.stringify({type: 'log', data: message_to_log}) + DELIMITER)
     })
 
@@ -766,15 +767,13 @@ function start_game() {
     //and might aswell save the sockets player position
     const player = new Player()
     socket.player = player
-
-    // //notify the other players
-    // game.event.emit('log', 'New player joined')
   })
 
   game_server.on('close', (socket) => {
     //broadcast to everyone that someone left
     game.event.emit('log', `Player ${socket.player} left`)
     //delete that player from the system
+    game.players = game.players.filter((player) => player.number !== socket.player.number)
     delete socket.player
   })
 
