@@ -270,12 +270,12 @@ class Game {
   join(player) {
     //get a random position on the map
     //while the position is not ground, place the player there
-    let y = Math.floor(Math.random() * this.map.length)
-    let x = Math.floor(Math.random() * this.map[0].length)
-    while (!this.map[y][x] instanceof Ground) {
+    let y;
+    let x;
+    do {
       y = Math.floor(Math.random() * this.map.length)
       x = Math.floor(Math.random() * this.map[0].length)
-    }
+    } while (!(this.map[y][x] instanceof Ground))
     this.players.push(player)
     this.map[y][x] = player
     player.position = {x, y}
@@ -294,6 +294,7 @@ class Game {
     ]})
   }
   async move(entity, action, direction) {
+    console.table(this.players);
     let legal = false
     if (!entity.position) return
     
