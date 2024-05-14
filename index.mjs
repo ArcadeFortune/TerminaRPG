@@ -42,9 +42,9 @@ const GAME_SERVER_ADDRESS = get_ip_address() //changes when connecting to remote
 const GAME_SERVER_PORT = 49152 //any number i want
 let new_address = GAME_SERVER_ADDRESS;
 let new_port = GAME_SERVER_PORT
-const DELIMITER = 'µ'
 const TILE_SIZE = 2;
 const INVINCIBILITY_FRAMES = 300
+const DELIMITER = 'µ'
 
 class Server extends EventEmitter {
   constructor(port, address='localhost', server_type='Server') {
@@ -289,9 +289,13 @@ class Game {
       { x, y, what: player.toString() }
     ]})
   }
-  move(entity, action, direction) {
+  async move(entity, action, direction) {
     let legal = false
     if (!entity.position) return
+    
+    // if its a zombie attacking, delay the logic
+    if (entity instanceof Zombie) await new Promise(resolve => setTimeout(() => {resolve()}, INVINCIBILITY_FRAMES))
+    if (entity instanceof Zombie) console.log(entity);
     const i = entity.position.y
     const j = entity.position.x
     let new_i = i
@@ -350,14 +354,42 @@ class Game {
             } else legal = false
           } 
         }
-        break;         
+        break;
+      case 'NW':
+        new_i = i-1
+        new_j = j-1
+        //check for the boundries
+        if (new_i >= 0 && new_j >= 0) legal = true
+        else legal = false
+        break;
+      case 'NE':
+        new_i = i-1
+        new_j = j+1
+        //check for the boundries
+        if (new_i >= 0 && new_j < this.map[i].length) legal = true
+        else legal = false
+        break;
+      case 'SW':
+        new_i = i+1
+        new_j = j-1
+        //check for the boundries
+        if (new_i < this.map.length && new_j >= 0) legal = true
+        else legal = false
+        break;
+      case 'SE':
+        new_i = i+1
+        new_j = j+1
+        //check for the boundries
+        if (new_i < this.map.length && new_j < this.map[i].length) legal = true
+        else legal = false
+        break;
       default:
-        console.log('no action specified');
+        console.log('Unkown direction:', direction);
         break;
     }
 
     if (!legal) {
-      //handle illegal movements, maybe ban them or do nothing
+      //handle illegal movements, do nothing
       if (action === 'move') return
       if (action === 'attack') return
     }
@@ -366,24 +398,53 @@ class Game {
       //move logic that would be repetetiv
       this.map[new_i][new_j].damaged = false
       const temp = this.map[i][j]
-      this.map[i][j] = this.map[new_i][new_j]
-      this.map[new_i][new_j] = temp
+      this.map[i][j] = this.map[new_i][new_j] //new_i & j is the player
+      this.map[new_i][new_j] = temp 
 
       //instantly update on player move.
-      
       this.event.emit('happening', { type: 'changes', data: [
         { x: j, y: i, what: ' ' }, 
         { x: new_j, y: new_i, what: entity.toString() }
       ]})
+
+      let found = false
+      //check in a 3x3 radius if a zombie is there
+      for (let y = new_i-1; y <= new_i+1; y++) {
+        for (let x = new_j-1; x <= new_j+1; x++) {
+          if (this.map[y][x] instanceof Zombie) {
+            // console.log('zombie at position', this.map[y][x].position);
+            //check what direction the zombie needs to attack
+            if (x === new_j && y > new_i) this.move(this.map[y][x], 'attack', 'N')
+            if (x === new_j && y < new_i) this.move(this.map[y][x], 'attack', 'S')
+            if (y === new_i && x > new_j) this.move(this.map[y][x], 'attack', 'W')
+            if (y === new_i && x < new_j) this.move(this.map[y][x], 'attack', 'E')
+            if (x > new_j && y > new_i) this.move(this.map[y][x], 'attack', 'NW')
+            if (x > new_j && y < new_i) this.move(this.map[y][x], 'attack', 'SW')
+            if (x < new_j && y > new_i) this.move(this.map[y][x], 'attack', 'NE')
+            if (x < new_j && y < new_i) this.move(this.map[y][x], 'attack', 'SE')
+            
+            // console.log('zombie (x/y)', x, y);
+            // console.log('player (new)', new_j, new_i);
+            found = true
+          }
+          if (found) break
+        }
+        if (found) break
+      }
     }
 
     if (action === 'attack') {
       //attack logic
       const enemy = this.map[new_i][new_j]
-      //apply 'damaged' to entity only if it is not in cooldown
+      
+      //cannot attack already attacked entities, because of invincibility frames
       if (enemy.damaged === false) {
-        //if entity would die...
-        if (enemy.strength <= 1 && !(enemy instanceof Ground)) {
+        //damage them
+        enemy.strength -= entity.strength
+        enemy.damaged = true
+
+        //if entity died
+        if (enemy.strength <= 0 && !(enemy instanceof Ground)) {
           //update the death of the entity
           this.event.emit('happening', { type: 'changes', data: [
             { x: new_j, y: new_i, what: 'f'+enemy.toString() }
@@ -394,35 +455,27 @@ class Game {
             this.event.emit('happening', { type: 'death', who: enemy.toString() })
           }
 
-          //...kill them
+          //kill them
           this.map[enemy.position.y][enemy.position.x] = new Ground()
           
-          setTimeout(() => {
-            //reset 'damaged' after delay
-            enemy.damaged = false
-            //and display the LATEST map changes
-            
-            this.event.emit('happening', { type: 'changes', data: [
-              { x: new_j, y: new_i, what: this.map[new_i][new_j].toString() }
-            ]})
-          }, INVINCIBILITY_FRAMES)
         } else {
-          //..else just damage them
-          enemy.strength -= entity.strength
-          enemy.damaged = true
-          setTimeout(() => {
-            //reset 'damaged' after delay
-            enemy.damaged = false
-            
-            this.event.emit('happening', { type: 'changes', data: [
-              { x: new_j, y: new_i, what: this.map[new_i][new_j].toString() }
-            ]})
-          }, INVINCIBILITY_FRAMES)
           //update the damage frames to the players
           this.event.emit('happening', { type: 'changes', data: [
             { x: new_j, y: new_i, what: 'd'+this.map[new_i][new_j].toString() }
           ]})
+
         }
+        //after the INVINCIBILITY_FRAMES
+        setTimeout(() => {
+          //reset, the entity is no longer damaged, and can be attacked
+          enemy.damaged = false
+          
+          //also update the map
+          this.event.emit('happening', { type: 'changes', data: [
+            { x: new_j, y: new_i, what: this.map[new_i][new_j].toString() }
+          ]})
+        }, INVINCIBILITY_FRAMES)
+
       }
     }
   }
