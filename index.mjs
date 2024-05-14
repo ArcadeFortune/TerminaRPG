@@ -232,7 +232,7 @@ class Wall extends Entity {
 class Game {
   constructor() {
     this.event = new EventEmitter();
-    this.map = this.generate_map(30, 10)
+    this.map = this.generate_map(10, 7)
     this.players = []
   }
   generate_map(width, height) {
@@ -268,10 +268,14 @@ class Game {
     return map
   }
   join(player) {
-    //spawn the player in the middle of the map
-    const y = Math.floor(this.map.length/2)
-    const x = Math.floor(this.map[0].length/2)
-    //maybe check if another player is on that spot? nahh
+    //get a random position on the map
+    //while the position is not ground, place the player there
+    let y = Math.floor(Math.random() * this.map.length)
+    let x = Math.floor(Math.random() * this.map[0].length)
+    while (!this.map[y][x] instanceof Ground) {
+      y = Math.floor(Math.random() * this.map.length)
+      x = Math.floor(Math.random() * this.map[0].length)
+    }
     this.players.push(player)
     this.map[y][x] = player
     player.position = {x, y}
@@ -295,7 +299,6 @@ class Game {
     
     // if its a zombie attacking, delay the logic
     if (entity instanceof Zombie) await new Promise(resolve => setTimeout(() => {resolve()}, INVINCIBILITY_FRAMES))
-    if (entity instanceof Zombie) console.log(entity);
     const i = entity.position.y
     const j = entity.position.x
     let new_i = i
