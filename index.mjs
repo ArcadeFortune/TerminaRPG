@@ -190,6 +190,8 @@ class Player extends Entity {
     this.strength = 1;
     this.position = {}
     this.number = 0
+    this.kills = 0
+    this.deaths = 0
   }
   toString() {
     return JSON.stringify(this.number)
@@ -294,7 +296,7 @@ class Game {
     ]})
   }
   async move(entity, action, direction) {
-    console.table(this.players);
+    // console.table(this.players, ['kills', 'deaths']);
     let legal = false
     if (!entity.position) return
     
@@ -455,6 +457,12 @@ class Game {
           ]})
           //if player
           if (enemy instanceof Player) {
+            //update the player's deaths
+            enemy.deaths++
+            //and if the player is the killer
+            entity.kills++
+            
+            //notify the other players
             this.event.emit('log', `Player ${enemy} died`)
             this.event.emit('happening', { type: 'death', who: enemy.toString() })
           }
