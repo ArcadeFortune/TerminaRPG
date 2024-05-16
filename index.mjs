@@ -38,13 +38,18 @@ function get_ip_address(family='IPv4') {
 }
 
 //global variables and constants
-const GAME_SERVER_ADDRESS = get_ip_address() //changes when connecting to remote server
-const GAME_SERVER_PORT = 49152 //any number i want
-let new_address = GAME_SERVER_ADDRESS;
-let new_port = GAME_SERVER_PORT
+const DEFAULT_GAME_SERVER_ADDRESS = get_ip_address() //changes when connecting to remote server
+const DEFAULT_GAME_SERVER_PORT = 49152 //any number i want
 const TILE_SIZE = 2;
 const INVINCIBILITY_FRAMES = 300
 const DELIMITER = 'µ'
+
+
+// Server code //
+
+function DEBUG(...text) {
+  if (false) console.log(...text);
+}
 
 class Server extends EventEmitter {
   constructor(port, address='localhost', server_type='Server') {
@@ -54,12 +59,12 @@ class Server extends EventEmitter {
     this.server_type = server_type + '/Server'
     //start the server as soon as this is initialized
     this.server = net.createServer((socket) => {
-      // console.info('New client connected');
+      DEBUG('New client connected');
       socket.setEncoding('utf-8');
       socket.on('data', (data) => data.split(DELIMITER).slice(0, -1).forEach(task => this.emit('message', JSON.parse(task), socket)))
 
       socket.on('error', (error) => {
-        // console.error('Error from the serverside: ', error); //like hell will i print that
+        // DEBUG('Error from the serverside: ', error)
       })
       socket.on('close', () => {
         this.emit('close', socket)
@@ -71,13 +76,13 @@ class Server extends EventEmitter {
     })
 
     this.server.on('close', () => {
-      console.info(`
+      DEBUG(`
         \r${this.server_type} shutting down...
       `);
     })
 
     this.server.listen(this.port, this.address, () => {
-      console.info(`
+      DEBUG(`
         \r${this.server_type} started on:
         address: ${this.address}
         port: ${this.port}
@@ -87,121 +92,45 @@ class Server extends EventEmitter {
   }
 }
 
-class Client extends EventEmitter {
-  constructor(connect_to_port, connect_to_address, client_type='Client') {
-    super()
-    this.port = connect_to_port
-    this.address = connect_to_address
-    this.socket_type = client_type + '/Client'
-
-    //connect to the server as soon as this is initialized
-    this.socket = net.createConnection({
-      port: this.port,
-      host: this.address,
-      timeout: 500
-    })
-    
-    this.socket.on('timeout', () => {
-      this.emit('connection_timeout')
-    })
-
-    this.socket.on('error', (error) => {
-      if (error.code === 'ECONNRESET') {
-        this.emit('server_close')
-      }
-    })
-    
-    // this.socket.on('close', (intentional) => {
-    // })
-    
-    this.socket.on('connect', () => {
-      this.socket.removeAllListeners('timeout')
-      this.emit('connect')
-    })
-
-    this.socket.on('data', (data) => {
-      // console.log('FOUND DATA AHHH', data.toString());
-      data = data.toString()
-      data.split(DELIMITER).slice(0, -1).forEach(task => this.emit('message', JSON.parse(task)))
-    })
-  }
-
-  close(intentional=false) {
-    this.socket.destroy(intentional)
-  }
-
-  send(message, type) {
-    if (!message || !type) return console.error('insufficent parameters')
-
-    const full_message = {}
-    full_message['type'] = type
-    full_message['data'] = { ...message }
-
-    this.socket.write(JSON.stringify(full_message) + DELIMITER)
-  }
-  
-  action(key) {
-    switch (key.name) {
-      case 'w':
-        this.send({direction: 'N', action: 'move'}, 'move')
-        break;    
-      case 's':
-        this.send({direction: 'S', action: 'move'}, 'move')
-        break;
-      case 'a':
-        this.send({direction: 'W', action: 'move'}, 'move')
-        break;
-      case 'd':
-        this.send({direction: 'E', action: 'move'}, 'move')
-        break;
-      case 'up':
-        this.send({direction: 'N', action: 'attack'}, 'move')
-        break;
-      case 'down':
-        this.send({direction: 'S', action: 'attack'}, 'move')
-        break;
-      case 'left':
-        this.send({direction: 'W', action: 'attack'}, 'move')
-        break;
-      case 'right':
-        this.send({direction: 'E', action: 'attack'}, 'move')
-        break;
-      case 'e':
-        process.stdout.write(`Host: ${new_address}                            \r`)
-        break;
-      default:
-        process.stdout.write(`Button ${key.name} unknown.             \r`)
-        break;
-    }
-  }
-}
-
 class Entity {
   constructor() {
-    this.is_entity = true
-    this.facing_direction = ''
+    this.is_entity = false
     this.damaged = false
   }
 }
 
-class Player extends Entity {
+class TheLiving extends Entity {
   constructor() {
     super()
-    this.strength = 1;
-    this.position = {}
-    this.number = 0
+    this.is_entity = true
+    this.default_strength = 0
+    this.strength = 0;
     this.kills = 0
     this.deaths = 0
+  }  
+  reset() {
+    this.strength = this.default_strength
+  }
+}
+
+class Player extends TheLiving {
+  constructor() {
+    super()
+    this.default_strength = 1
+    this.strength = this.default_strength
+    this.position = {}
+    this.number = 0
   }
   toString() {
     return JSON.stringify(this.number)
   }
 }
 
-class Zombie extends Entity {
+class Zombie extends TheLiving {
   constructor(x, y) {
     super()
-    this.strength = 3;
+    this.default_strength = 3
+    this.strength = this.default_strength
     this.position = {x, y}
   }
   toString() {
@@ -212,7 +141,6 @@ class Zombie extends Entity {
 class Ground extends Entity {
   constructor() {
     super()
-    // this.is_entity = false
     this.strength = -Infinity;
   }
   toString() {
@@ -223,7 +151,6 @@ class Ground extends Entity {
 class Wall extends Entity {
   constructor() {
     super()
-    // this.is_entity = false
     this.strength = Infinity;
   }
   toString() {
@@ -270,22 +197,27 @@ class Game {
     return map
   }
   join(player) {
-    //get a random position on the map
-    //while the position is not ground, place the player there
     let y;
     let x;
     do {
+      //get a random position on the map
       y = Math.floor(Math.random() * this.map.length)
       x = Math.floor(Math.random() * this.map[0].length)
     } while (!(this.map[y][x] instanceof Ground))
+    //try again until it finds a ground cell
+
+    //add the player to the game
     this.players.push(player)
     this.map[y][x] = player
     player.position = {x, y}
-        
-    for (let n = 1; n <= this.players.length + 1; n++) {
-      if (this.players.every((player) => player.number !== n)) {
-        player.number = n
-        break
+
+    //give the player a number if he doesn't have one
+    if (!player.number) {
+      for (let n = 1; n <= this.players.length + 1; n++) {
+        if (this.players.every((player) => player.number !== n)) {
+          player.number = n
+          break
+        }
       }
     }
     
@@ -418,7 +350,6 @@ class Game {
       for (let y = new_i-1; y <= new_i+1; y++) {
         for (let x = new_j-1; x <= new_j+1; x++) {
           if (this.map[y][x] instanceof Zombie) {
-            // console.log('zombie at position', this.map[y][x].position);
             //check what direction the zombie needs to attack
             if (x === new_j && y > new_i) this.move(this.map[y][x], 'attack', 'N')
             if (x === new_j && y < new_i) this.move(this.map[y][x], 'attack', 'S')
@@ -428,9 +359,6 @@ class Game {
             if (x > new_j && y < new_i) this.move(this.map[y][x], 'attack', 'SW')
             if (x < new_j && y > new_i) this.move(this.map[y][x], 'attack', 'NE')
             if (x < new_j && y < new_i) this.move(this.map[y][x], 'attack', 'SE')
-            
-            // console.log('zombie (x/y)', x, y);
-            // console.log('player (new)', new_j, new_i);
             found = true
           }
           if (found) break
@@ -442,7 +370,6 @@ class Game {
     if (action === 'attack') {
       //attack logic
       const enemy = this.map[new_i][new_j]
-      
       //cannot attack already attacked entities, because of invincibility frames
       if (enemy.damaged === false) {
         //damage them
@@ -457,11 +384,13 @@ class Game {
           ]})
           //if player
           if (enemy instanceof Player) {
-            //update the player's deaths
+            //update the kill counters
             enemy.deaths++
-            //and if the player is the killer
             entity.kills++
             
+            //reset the player, accept the kills
+            enemy.reset()
+
             //notify the other players
             this.event.emit('log', `Player ${enemy} died`)
             this.event.emit('happening', { type: 'death', who: enemy.toString() })
@@ -493,23 +422,186 @@ class Game {
   }
 }
 
+//function to start game & game server
+function start_game() {
+  console.clear()
+  DEBUG('loading')
+  const game = new Game()
+
+  //initialize the game's server
+  const game_server = new Server(DEFAULT_GAME_SERVER_PORT, DEFAULT_GAME_SERVER_ADDRESS, 'GameService')
+
+  game_server.on('start', () => {
+    // DEBUG('Game server started')
+    display.player_connect()
+  })
+
+  //when a new player has connected to our server...
+  game_server.on('connection', (socket) => {
+    //we set up events to send information towards that socket
+    //this whole game works on events
+    game.event.on('happening', (happening) => {
+      //after a socket disconnects, all the events will still be emitted
+      if (!socket.player) return
+
+      //on death occastion,
+      if (happening.type === 'death') {
+        //only send that information to the dead client
+        if (happening.who === socket.player.toString()) {
+          socket.write(JSON.stringify(happening) + DELIMITER)
+        }
+      } else {
+        socket.write(JSON.stringify(happening) + DELIMITER)
+      }
+    })
+    game.event.on('log', (message_to_log) => {
+      DEBUG(message_to_log)
+      if (!socket.player) return
+      socket.write(JSON.stringify({type: 'log', data: message_to_log}) + DELIMITER)
+    })
+
+    //and might aswell save the sockets player position
+    const player = new Player()
+    socket.player = player
+  })
+
+  game_server.on('close', (socket) => {
+    //broadcast to everyone that someone left
+    game.event.emit('log', `Player ${socket.player} left`)
+    //delete that player from the system
+    game.players = game.players.filter((player) => player.number !== socket.player.number)
+    delete socket.player
+  })
+
+  //when a player sends a message
+  game_server.on('message', (message, socket) => {
+    switch (message.type) {
+      case 'join':
+        game.join(socket.player)
+        socket.write(JSON.stringify({type: 'map', data: game.string_map()}) + DELIMITER)
+        break;
+      case 'move':
+        game.move(socket.player, message.data.action, message.data.direction)
+        // game.move(message.data.direction, socket.player)
+        break
+      default:
+        DEBUG('unknown message type:', message);
+    }
+    // DEBUG(`Got message from player ${socket.player}:`, message);
+  })
+}
+
+
+// Client code //
+
+class Client extends EventEmitter {
+  constructor(connect_to_port, connect_to_address, client_type='Client') {
+    super()
+    this.port = connect_to_port
+    this.address = connect_to_address
+    this.socket_type = client_type + '/Client'
+
+    //connect to the server as soon as this is initialized
+    this.socket = net.createConnection({
+      port: this.port,
+      host: this.address,
+      timeout: 500
+    })
+    
+    this.socket.on('timeout', () => {
+      this.emit('connection_timeout')
+    })
+
+    this.socket.on('error', (error) => {
+      if (error.code === 'ECONNRESET') {
+        this.emit('server_close')
+      }
+    })
+    
+    // this.socket.on('close', (intentional) => {
+    // })
+    
+    this.socket.on('connect', () => {
+      this.socket.removeAllListeners('timeout')
+      this.emit('connect')
+    })
+
+    this.socket.on('data', (data) => {
+      // console.log('FOUND DATA AHHH', data.toString());
+      data = data.toString()
+      data.split(DELIMITER).slice(0, -1).forEach(task => this.emit('message', JSON.parse(task)))
+    })
+  }
+
+  close(intentional=false) {
+    this.socket.destroy(intentional)
+  }
+
+  send(message, type) {
+    if (!message || !type) return console.error('insufficent parameters')
+
+    const full_message = {}
+    full_message['type'] = type
+    full_message['data'] = { ...message }
+
+    this.socket.write(JSON.stringify(full_message) + DELIMITER)
+  }
+  
+  action(key) {
+    switch (key.name) {
+      case 'w':
+        this.send({direction: 'N', action: 'move'}, 'move')
+        break;    
+      case 's':
+        this.send({direction: 'S', action: 'move'}, 'move')
+        break;
+      case 'a':
+        this.send({direction: 'W', action: 'move'}, 'move')
+        break;
+      case 'd':
+        this.send({direction: 'E', action: 'move'}, 'move')
+        break;
+      case 'up':
+        this.send({direction: 'N', action: 'attack'}, 'move')
+        break;
+      case 'down':
+        this.send({direction: 'S', action: 'attack'}, 'move')
+        break;
+      case 'left':
+        this.send({direction: 'W', action: 'attack'}, 'move')
+        break;
+      case 'right':
+        this.send({direction: 'E', action: 'attack'}, 'move')
+        break;
+      case 'e':
+        display.log_ip()
+        break;
+      default:
+        process.stdout.write(`Button ${key.name} unknown.             \r`)
+        break;
+    }
+  }
+}
+
 class Display {
   constructor() {
     this.is_in_intro = false
+    this.is_in_death_screen = false
     this.to_log = []
     this.menu_title = ''
     this.op_animation = null //interval id for 'Nevermind...' animation
+    this.player_client = null //the client to connect to the server
+    this.game_server_port = DEFAULT_GAME_SERVER_PORT
+    this.game_server_address = DEFAULT_GAME_SERVER_ADDRESS
     this.default_options = {
       main: [
         {id: 'play', name: 'Play game'},
         {id: 'play_online', name: 'Play online in LAN'},
-        // {id: 'settings', name: 'Settings'},
-        // {id: 'tutorial', name: 'Tutorial'},
         {id: 'quit', name: 'Nevermind'},
       ],
       play_online: [
         {id: 'host', name: 'Enter Host', type: 'input', placeholder: 'XXX.XXX.X.X'},
-        {id: 'port', name: 'Enter Port', type: 'input', value: GAME_SERVER_PORT.toString(), placeholder: 'XXXXX'},
+        {id: 'port', name: 'Enter Port', type: 'input', value: DEFAULT_GAME_SERVER_PORT.toString(), placeholder: 'XXXXX'},
         {id: 'play_remote', name: 'Play together'},
         {id: 'main', name: 'Return to menu'},
       ],
@@ -550,12 +642,14 @@ class Display {
 
     process.stdin.setRawMode(true);
     process.stdin.setEncoding('utf-8');
-  }
-  
+  }  
   async menu(type, options) {
     //inside the options are stored values of previous screen
     switch(type) {
       case 'main':
+        //if accessed from death screen, close the player client
+        this.player_client?.close(false)
+        
         this.menu_title = '\\\\ Main Menu //'
         options = this.default_options.main
         this.show(options)
@@ -577,10 +671,9 @@ class Display {
         break;
       //cases for when a button is clicked, that is not another menu
       case 'play':
-        console.log('start');
-        //reset server address so it uses localhost again
-        new_address = GAME_SERVER_ADDRESS;
-        new_port = GAME_SERVER_PORT
+        //reset the server address and port
+        this.game_server_address = DEFAULT_GAME_SERVER_ADDRESS
+        this.game_server_port = DEFAULT_GAME_SERVER_PORT
         start_game()
         break;
       case 'play_remote':
@@ -598,23 +691,26 @@ class Display {
           this.show(options, 1)
           break;
         }
+        //notify player that it is connecting
         options = this.default_options.play_online
         options[2].message = 'Connecting...'
         this.show(options, 2)
-        //game start but with a remote server
-        new_address = address_to_connect
-        new_port = port_to_connect
-        start_player()
+        //start game but with a remote server
+        this.game_server_address = address_to_connect
+        this.game_server_port = port_to_connect
+        this.player_connect()
         break    
       case 'play_again_remote':
         //playing again has 'options' variable changed, so more switch cases
-        start_player()
+        // this.player_connect()
+        this.player_join()
         break
       case 'quit':
         console.clear()
         console.log('bye')
         process.exit(0)
       case 'death':
+        this.is_in_death_screen = true
         this.intro('You died.', 'death_screen')
         break;
     }
@@ -747,6 +843,9 @@ class Display {
   log(data) {
     this.to_log.push(data)
   }
+  log_ip() {
+    console.log('Host: ', this.game_server_address)
+  }
   process_char(char='') {
     let text_to_display = '';
     let chars = char.split('')
@@ -785,162 +884,92 @@ class Display {
     }
     console.log(this.COLORS.reset);
   }
-  async update(message) {
+  update(data) {
+    if (!data) return console.error('No data to update')
+    if (this.is_in_death_screen) return //dont update while in intro
+
+    //for performance, move the cursor to the pixels to change and change them manually.
+    data.forEach((change) => {
+      for (let k = 0; k < TILE_SIZE; k++) {
+        //move the cursor to the pixel location
+        readline.cursorTo(
+          process.stdout, 
+          change.x * (TILE_SIZE + 1), //scale with the TILE_SIZE
+          change.y * TILE_SIZE + k
+        ); //k is the amount of rows below
+        
+        process.stdout.write(this.process_char(change.what).repeat(TILE_SIZE + 1))
+      }
+    })
+    process.stdout.write(this.COLORS.reset)
+  }
+  player_connect() {
+    //initialize the player's client
+    this.player_client = new Client(this.game_server_port, this.game_server_address, 'PlayerService')
+
+    //ask the server to join ourselves
+    this.player_join()
+
+    this.player_client.on('message', (message) => {            
+      //if the server sends an important message, like a new player joined
+      switch (message.type) {
+        case 'map':
+          this.render(message.data)
+          break;
+        case 'log':
+          this.to_log.push(message.data)
+          break
+        case 'death': 
+          setTimeout(() => this.menu('death'), INVINCIBILITY_FRAMES)
+          break;
+        case 'changes':
+          this.update(message.data)
+          break;
+        default: 
+          console.log('Unknown message received from server: ', message);
+      }
+      //move the cursor below the map
+      readline.cursorTo(process.stdout, 0, 10*TILE_SIZE) //10 is height of map, defined in Game
+      // //this will move the curosr to the bottom right of the terminal
+      // readline.cursorTo(process.stdout, this.rl.output.columns, this.rl.output.rows)
+
+      if (!this.is_in_death_screen) 
+      this.to_log.forEach(message => console.log(message + '                        '))
+    })
+  
+    //but ofcourse, if the server is unreachable, a connection timeout will happen
+    this.player_client.on('connection_timeout', () => {
+      this.player_client.close() //close the client
+      //go back to the play_online menu
+      const options = this.default_options.play_online
+      options[2].message = ''
+      options[2].error = 'Connection failed'
+      this.show(options, 2)
+      //cant find another way to display error messages from outside
+    })
+  
+    this.player_client.on('server_close', () => {
+      this.menu('server_close')
+    })    
+  }
+  player_join() {
+    this.is_in_death_screen = false
+    this.player_client.send({}, 'join')
+    this.to_log = [] //clear any previous messages
+  
+    //give keyboard control to the player
+    process.stdin.removeAllListeners('keypress')
+    process.stdin.on('keypress', (str, key) => {
+      if (key.ctrl && key.name === 'c') {
+        process.exit();
+      }
+      else {
+        this.player_client.action(key)
+      }
+    });
+
   }
 }
 
 const display = new Display()
-
-//function to start game & game server
-function start_game() {
-  console.clear()
-  console.log('loading')
-  const game = new Game()
-
-  //initialize the game's server
-  const game_server = new Server(new_port, new_address, 'GameService')
-
-  game_server.on('start', () => {
-    start_player()
-  })
-
-  //when a new player has connected to our server...
-  game_server.on('connection', (socket) => {
-    //we set up events to send information towards that socket
-    //this whole game works on events
-    game.event.on('happening', (happening) => {
-      //after a socket disconnects, all the events will still be emitted
-      if (!socket.player) return
-      //on death occastion,
-      if (happening.type === 'death') {
-        //only send that information to the dead client
-        if (happening.who === socket.player.toString()) {
-          socket.write(JSON.stringify(happening) + DELIMITER)
-        }
-      } else {
-        socket.write(JSON.stringify(happening) + DELIMITER)
-      }
-    })
-    game.event.on('log', (message_to_log) => {
-      if (!socket.player) return
-      socket.write(JSON.stringify({type: 'log', data: message_to_log}) + DELIMITER)
-    })
-
-    //and send the current state of the map to it
-    socket.write(JSON.stringify(game.string_map()) + DELIMITER)
-
-    //and might aswell save the sockets player position
-    const player = new Player()
-    socket.player = player
-  })
-
-  game_server.on('close', (socket) => {
-    //broadcast to everyone that someone left
-    game.event.emit('log', `Player ${socket.player} left`)
-    //delete that player from the system
-    game.players = game.players.filter((player) => player.number !== socket.player.number)
-    delete socket.player
-  })
-
-  //when a player sends a message
-  game_server.on('message', (message, socket) => {
-    switch (message.type) {
-      case 'join':
-        game.join(socket.player)
-        break;
-      case 'move':
-        game.move(socket.player, message.data.action, message.data.direction)
-        // game.move(message.data.direction, socket.player)
-        break
-      default:
-        console.log('unknown message type:', message);
-    }
-    // console.log('GOT MESSAGE FROM CLIENT:', message);
-  })
-}
-
-function start_player() {
-  //initialize the player's client
-  const player_client = new Client(new_port, new_address, 'PlayerService')
-  //when the player receives its first message (complete game map)
-  player_client.once('message', (message) => {
-    //display that
-    display.render(message)
-    //and then ask the server to join ourselves
-    player_client.send({}, 'join')
-
-    player_client.once('message', () => { //the second message is 'new player joined', and is 2b skipped
-      player_client.on('message', (message) => {            
-        //if the server sends an important message, like a new player joined
-        switch (message.type) {
-          case 'log':
-            display.to_log.push(message.data)
-            break
-          case 'death': 
-            //if person who died is me
-            player_client.close(false)
-            //show that 
-            setTimeout(() => display.menu('death'), INVINCIBILITY_FRAMES)
-            break;
-          case 'changes':
-            //for performance, move the cursor to the pixels to change and change them manually.
-            message.data.forEach((change) => {
-              for (let k = 0; k < TILE_SIZE; k++) {
-                //move the cursor to the pixel location
-                readline.cursorTo(
-                  process.stdout, 
-                  change.x * (TILE_SIZE + 1), //scale with the TILE_SIZE
-                  change.y * TILE_SIZE + k
-                ); //k is the amount of rows below
-                
-                process.stdout.write(display.process_char(change.what).repeat(TILE_SIZE + 1))
-              }
-            })
-            process.stdout.write(display.COLORS.reset)
-            break;
-          default: 
-            console.log('Unknown message received from server: ', message);
-        }
-        //move the cursor below the map
-        readline.cursorTo(process.stdout, 0, 10*TILE_SIZE) //10 is height of map, defined in Game
-        // //this will move the curosr to the bottom right of the terminal
-        // readline.cursorTo(process.stdout, this.rl.output.columns, this.rl.output.rows)
-
-        //finally log what is to log
-        display.to_log.forEach(message => console.log(message + '                        '))
-
-        display.update(message)
-      })
-    })
-  })
-
-  //but ofcourse, if the server is unreachable, a connection timeout will happen
-  player_client.on('connection_timeout', () => {
-    player_client.close() //close the client
-    //go back to the play_online menu
-    const options = display.default_options.play_online
-    options[2].message = ''
-    options[2].error = 'Connection failed'
-    display.show(options, 2)
-    //cant find another way to display error messages from outside
-  })
-
-  player_client.on('server_close', () => {
-    display.menu('server_close')
-  })
-  
-  display.to_log = [] //clear any previous messages
-
-  //give keyboard control to the player
-  process.stdin.removeAllListeners('keypress')
-  process.stdin.on('keypress', (str, key) => {
-    if (key.ctrl && key.name === 'c') {
-      process.exit();
-    }
-    else {
-      player_client.action(key)
-    }
-  });
-}
-
 display.intro('Welcome to TerminaRPG\nPress any key to start\n')
