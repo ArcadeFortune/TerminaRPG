@@ -104,6 +104,7 @@ class TheLiving extends Entity {
     super()
     this.is_entity = true
     this.default_strength = 0
+    this.last_attack = Date.now() //timestamp of when the last attack was
     this.strength = 0;
     this.kills = 0
     this.deaths = 0
@@ -369,6 +370,11 @@ class Game {
 
     if (action === 'attack') {
       //attack logic
+      //cannot attack right after the last attack
+      if (entity.last_attack > Date.now() - INVINCIBILITY_FRAMES) return
+      //refresh the timestamp of the last attack
+      entity.last_attack = Date.now()
+      
       const enemy = this.map[new_i][new_j]
       //cannot attack already attacked entities, because of invincibility frames
       if (enemy.damaged === false) {
