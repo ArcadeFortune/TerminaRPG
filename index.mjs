@@ -40,6 +40,8 @@ function get_ip_address(family='IPv4') {
 //global variables and constants
 const DEFAULT_GAME_SERVER_ADDRESS = get_ip_address() //changes when connecting to remote server
 const DEFAULT_GAME_SERVER_PORT = 49152 //any number i want
+const MAP_WIDTH = 30
+const MAP_HEIGHT = 10
 const TILE_SIZE = 2;
 const INVINCIBILITY_FRAMES = 300
 const DELIMITER = 'µ'
@@ -96,6 +98,7 @@ class Entity {
   constructor() {
     this.is_entity = false
     this.damaged = false
+    this.health = 0
   }
 }
 
@@ -103,21 +106,26 @@ class TheLiving extends Entity {
   constructor() {
     super()
     this.is_entity = true
+    this.default_health = 0
     this.default_strength = 0
-    this.last_attack = Date.now() //timestamp of when the last attack was
+    this.health = 0
     this.strength = 0;
+    this.last_attack = Date.now() //timestamp of when the last attack was
     this.kills = 0
     this.deaths = 0
   }  
   reset() {
     this.strength = this.default_strength
+    this.health = this.default_health
   }
 }
 
 class Player extends TheLiving {
   constructor() {
     super()
+    this.default_health = 10
     this.default_strength = 1
+    this.health = this.default_health
     this.strength = this.default_strength
     this.position = {}
     this.number = 0
@@ -131,6 +139,8 @@ class Zombie extends TheLiving {
   constructor(x, y) {
     super()
     this.default_strength = 3
+    this.default_health = 3
+    this.health = this.default_health
     this.strength = this.default_strength
     this.position = {x, y}
   }
@@ -143,6 +153,7 @@ class Ground extends Entity {
   constructor() {
     super()
     this.strength = -Infinity;
+    this.health = -Infinity
   }
   toString() {
     return ' '
@@ -153,17 +164,43 @@ class Wall extends Entity {
   constructor() {
     super()
     this.strength = Infinity;
+    this.health = Infinity
   }
   toString() {
     return '#'
   }
 }
 
+class Scoreboard {
+  constructor() {
+    this.players = {}
+  }
+  add(player) {
+    this.players[player.toString()] = {
+      kills: player.kills || 0, 
+      deaths: player.deaths || 0
+    }
+  }
+  remove(player) {
+    delete this.players[player.toString()]
+  }
+  increase_kills(player) {
+    this.players[player.toString()].kills++
+  }
+  decrease_kils(player) {
+    this.players[player.toString()].deaths++
+  }
+  toString() {
+    return this.players
+  }
+}
+
 class Game {
   constructor() {
     this.event = new EventEmitter();
-    this.map = this.generate_map(10, 7)
+    this.map = this.generate_map(MAP_WIDTH, MAP_HEIGHT)
     this.players = []
+    this.scoreboard = new Scoreboard()
   }
   generate_map(width, height) {
     const map = []
@@ -221,12 +258,26 @@ class Game {
         }
       }
     }
-    
+
+    //add him to the scoreboard with the kills and deaths
+    this.scoreboard.add(player)
     //notify the other players
-    this.event.emit('log', `Player ${player} joined`)
-    this.event.emit('happening', { type: 'changes', data: [
-      { x, y, what: player.toString() }
-    ]})
+    this.event.emit('happening', { 
+      type: 'join',
+      data: player.toString(),
+    })
+
+    this.event.emit('happening', {
+      type: 'changes', 
+      data: [
+        { x, y, what: player.toString() }
+      ],
+    })
+
+    this.event.emit('happening', { 
+      type: 'scoreboard', 
+      data: this.scoreboard.toString()
+    })
   }
   async move(entity, action, direction) {
     // console.table(this.players, ['kills', 'deaths']);
@@ -374,16 +425,16 @@ class Game {
       if (entity.last_attack > Date.now() - INVINCIBILITY_FRAMES) return
       //refresh the timestamp of the last attack
       entity.last_attack = Date.now()
-      
+
       const enemy = this.map[new_i][new_j]
       //cannot attack already attacked entities, because of invincibility frames
       if (enemy.damaged === false) {
         //damage them
-        enemy.strength -= entity.strength
+        enemy.health -= entity.strength
         enemy.damaged = true
 
         //if entity died
-        if (enemy.strength <= 0 && !(enemy instanceof Ground)) {
+        if (enemy.health <= 0 && !(enemy instanceof Ground)) {
           //update the death of the entity
           this.event.emit('happening', { type: 'changes', data: [
             { x: new_j, y: new_i, what: 'f'+enemy.toString() }
@@ -393,13 +444,16 @@ class Game {
             //update the kill counters
             enemy.deaths++
             entity.kills++
-            
+            this.scoreboard.increase_kills(entity)
+            this.scoreboard.decrease_kils(enemy)
+
             //reset the player, accept the kills
             enemy.reset()
 
             //notify the other players
             this.event.emit('log', `Player ${enemy} died`)
-            this.event.emit('happening', { type: 'death', who: enemy.toString() })
+            this.event.emit('happening', { type: 'scoreboard', data: this.scoreboard.toString() })
+            this.event.emit('happening', { type: 'kill', killer: entity.toString(), victim: enemy.toString()})
           }
 
           //kill them
@@ -407,16 +461,19 @@ class Game {
           
         } else {
           //update the damage frames to the players
-          this.event.emit('happening', { type: 'changes', data: [
-            { x: new_j, y: new_i, what: 'd'+this.map[new_i][new_j].toString() }
-          ]})
+          this.event.emit('happening', { 
+            type: 'changes', 
+            data: [
+              { x: new_j, y: new_i, what: 'd'+this.map[new_i][new_j].toString() }
+            ],
+            // player: entity
+          })
 
         }
         //after the INVINCIBILITY_FRAMES
         setTimeout(() => {
           //reset, the entity is no longer damaged, and can be attacked
-          enemy.damaged = false
-          
+          enemy.damaged = false          
           //also update the map
           this.event.emit('happening', { type: 'changes', data: [
             { x: new_j, y: new_i, what: this.map[new_i][new_j].toString() }
@@ -447,18 +504,12 @@ function start_game() {
     //we set up events to send information towards that socket
     //this whole game works on events
     game.event.on('happening', (happening) => {
-      //after a socket disconnects, all the events will still be emitted
       if (!socket.player) return
 
-      //on death occastion,
-      if (happening.type === 'death') {
-        //only send that information to the dead client
-        if (happening.who === socket.player.toString()) {
-          socket.write(JSON.stringify(happening) + DELIMITER)
-        }
-      } else {
-        socket.write(JSON.stringify(happening) + DELIMITER)
-      }
+      const obj = { ...happening, player: socket.player}
+      //after a socket disconnects, all the events will still be emitted
+
+      socket.write(JSON.stringify(obj) + DELIMITER)
     })
     game.event.on('log', (message_to_log) => {
       DEBUG(message_to_log)
@@ -472,19 +523,29 @@ function start_game() {
   })
 
   game_server.on('close', (socket) => {
-    //broadcast to everyone that someone left
-    game.event.emit('log', `Player ${socket.player} left`)
     //delete that player from the system
     game.players = game.players.filter((player) => player.number !== socket.player.number)
+    game.scoreboard.remove(socket.player.toString())
+    //broadcast to everyone that someone left
+    game.event.emit('log', `Player ${socket.player} left`)
+    game.event.emit('happening', { 
+      type: 'scoreboard', 
+      data: game.scoreboard.toString()
+    })
+    //delete the player from the socket
     delete socket.player
   })
 
   //when a player sends a message
   game_server.on('message', (message, socket) => {
+    // DEBUG(`Got message from player ${socket.player}:`, message);
     switch (message.type) {
+      case 'map':
+        socket.write(JSON.stringify({type: 'map', data: game.string_map()}) + DELIMITER)
+        break;
       case 'join':
         game.join(socket.player)
-        socket.write(JSON.stringify({type: 'map', data: game.string_map()}) + DELIMITER)
+        // socket.write(JSON.stringify({type: 'map', data: game.string_map()}) + DELIMITER)
         break;
       case 'move':
         game.move(socket.player, message.data.action, message.data.direction)
@@ -493,7 +554,6 @@ function start_game() {
       default:
         DEBUG('unknown message type:', message);
     }
-    // DEBUG(`Got message from player ${socket.player}:`, message);
   })
 }
 
@@ -593,6 +653,7 @@ class Display {
   constructor() {
     this.is_in_intro = false
     this.is_in_death_screen = false
+    this.scoreboard = []
     this.to_log = []
     this.menu_title = ''
     this.op_animation = null //interval id for 'Nevermind...' animation
@@ -637,7 +698,7 @@ class Display {
 
       'fZ': '\x1b[38;5;196m\x1b[48;5;34mX', //final moments of zombie
 
-      'd': '\x1b[38;5;196m/', //player damaged
+      'd': '\x1b[38;5;196m~', //player damaged
       'f': '\x1b[38;5;196m0', //player killed
     };
     this.rl = readline.createInterface({
@@ -859,7 +920,7 @@ class Display {
     //meaning the last letter contains a number,
     if (!isNaN(parseInt(chars[chars.length-1]))) {
       const player_number = parseInt(chars[chars.length-1])
-      //then give it a new color
+      //then give it a new color based on the number
       text_to_display += `\x1b[48;5;${player_number + 7}m`
 
       //and if the first letter is a registered modifier, for example when attacked
@@ -876,6 +937,14 @@ class Display {
     return text_to_display
 
   }
+  render_health(amount) {
+    //if the health has changed, set the color to red
+    let health = ''
+    for (let i = 0; i < amount; i++) {
+      health += '♥ '
+    }
+    return health + '                                        '
+  }
   render(map) {
     console.clear();
     //data is a 2 dimentional array
@@ -891,9 +960,8 @@ class Display {
     console.log(this.COLORS.reset);
   }
   update(data) {
+    //update should also handle log events but it cant right now
     if (!data) return console.error('No data to update')
-    if (this.is_in_death_screen) return //dont update while in intro
-
     //for performance, move the cursor to the pixels to change and change them manually.
     data.forEach((change) => {
       for (let k = 0; k < TILE_SIZE; k++) {
@@ -916,17 +984,31 @@ class Display {
     //ask the server to join ourselves
     this.player_join()
 
-    this.player_client.on('message', (message) => {            
+    this.player_client.on('message', (message) => {
+      if (this.is_in_death_screen) return //dont update while in intro
+         
       //if the server sends an important message, like a new player joined
       switch (message.type) {
         case 'map':
           this.render(message.data)
           break;
+        case 'join': 
+          //log in chat
+          this.to_log.push(`Player ${message.data} joined`)
+          break;
+        case 'scoreboard':
+          this.scoreboard = message.data
+          break;
         case 'log':
           this.to_log.push(message.data)
           break
-        case 'death': 
-          setTimeout(() => this.menu('death'), INVINCIBILITY_FRAMES)
+        case 'kill':
+          //if this client dies, go to the death screen
+          if (parseInt(message.victim) === parseInt(message.player.number)) {
+            message.player.health = 0 //on death, the players health is resest, so we manually change it
+            setTimeout(() => this.menu('death'), INVINCIBILITY_FRAMES)
+          }
+          // this.scoreboard[message.killer] = this.scoreboard[message.killer] || {kills: 0, deaths: 0}
           break;
         case 'changes':
           this.update(message.data)
@@ -935,11 +1017,16 @@ class Display {
           console.log('Unknown message received from server: ', message);
       }
       //move the cursor below the map
-      readline.cursorTo(process.stdout, 0, 10*TILE_SIZE) //10 is height of map, defined in Game
+      readline.cursorTo(process.stdout, 0, MAP_HEIGHT*TILE_SIZE)
+
       // //this will move the curosr to the bottom right of the terminal
       // readline.cursorTo(process.stdout, this.rl.output.columns, this.rl.output.rows)
 
-      if (!this.is_in_death_screen) 
+      let color = this.COLORS.reset
+      //if the player is damaged, render the hearts red
+      if (message.player?.damaged) color = '\x1b[38;5;196m'
+      console.log(color + this.render_health(message.player?.health) + this.COLORS.reset);
+      console.table(this.scoreboard);
       this.to_log.forEach(message => console.log(message + '                        '))
     })
   
@@ -960,6 +1047,7 @@ class Display {
   }
   player_join() {
     this.is_in_death_screen = false
+    this.player_client.send({}, 'map')
     this.player_client.send({}, 'join')
     this.to_log = [] //clear any previous messages
   
