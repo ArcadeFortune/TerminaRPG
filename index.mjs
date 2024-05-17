@@ -435,10 +435,7 @@ class Game {
 
         //if entity died
         if (enemy.health <= 0 && !(enemy instanceof Ground)) {
-          //update the death of the entity
-          this.event.emit('happening', { type: 'changes', data: [
-            { x: new_j, y: new_i, what: 'f'+enemy.toString() }
-          ]})
+          this.kill(enemy)
           //if player
           if (enemy instanceof Player) {
             //update the kill counters
@@ -447,7 +444,7 @@ class Game {
             this.scoreboard.increase_kills(entity)
             this.scoreboard.decrease_kils(enemy)
 
-            //reset the player, accept the kills
+            //reset the player, not the kills though
             enemy.reset()
 
             //notify the other players
@@ -455,9 +452,6 @@ class Game {
             this.event.emit('happening', { type: 'scoreboard', data: this.scoreboard.toString() })
             this.event.emit('happening', { type: 'kill', killer: entity.toString(), victim: enemy.toString()})
           }
-
-          //kill them
-          this.map[enemy.position.y][enemy.position.x] = new Ground()
           
         } else {
           //update the damage frames to the players
@@ -466,22 +460,40 @@ class Game {
             data: [
               { x: new_j, y: new_i, what: 'd'+this.map[new_i][new_j].toString() }
             ],
-            // player: entity
           })
-
+          //after the INVINCIBILITY_FRAMES
+          setTimeout(() => {
+            //reset, the entity is no longer damaged, and can be attacked
+            enemy.damaged = false          
+            //also update the map
+            this.event.emit('happening', { type: 'changes', data: [
+              { x: new_j, y: new_i, what: this.map[new_i][new_j].toString() }
+            ]})
+          }, INVINCIBILITY_FRAMES)
         }
-        //after the INVINCIBILITY_FRAMES
-        setTimeout(() => {
-          //reset, the entity is no longer damaged, and can be attacked
-          enemy.damaged = false          
-          //also update the map
-          this.event.emit('happening', { type: 'changes', data: [
-            { x: new_j, y: new_i, what: this.map[new_i][new_j].toString() }
-          ]})
-        }, INVINCIBILITY_FRAMES)
-
       }
     }
+  }
+  kill(entity) {
+    const { x, y } = entity.position
+    //if the entity is not there, do nothing
+    if (this.map[y][x] !== entity) return
+    //update the death of the entity
+    this.event.emit('happening', { type: 'changes', data: [
+      { x: x, y: y, what: 'f'+entity.toString() }
+    ]})
+    //kill them
+    this.map[y][x] = new Ground()
+    
+    //after the INVINCIBILITY_FRAMES
+    setTimeout(() => {
+      //reset, the entity is no longer damaged, and can be attacked
+      entity.damaged = false          
+      //also update the map
+      this.event.emit('happening', { type: 'changes', data: [
+        { x: x, y: y, what: this.map[y][x].toString() }
+      ]})
+    }, INVINCIBILITY_FRAMES)
   }
 }
 
@@ -526,6 +538,7 @@ function start_game() {
     //delete that player from the system
     game.players = game.players.filter((player) => player.number !== socket.player.number)
     game.scoreboard.remove(socket.player.toString())
+    game.kill(socket.player)
     //broadcast to everyone that someone left
     game.event.emit('log', `Player ${socket.player} left`)
     game.event.emit('happening', { 
