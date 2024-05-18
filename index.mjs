@@ -1,8 +1,9 @@
 await import ('node:process');
+const os = await import('node:os')
 const net = await import('node:net')
+const dgram = await import('node:dgram');
 const readline = await import('node:readline');
 const { EventEmitter } = await import('node:events');
-const os = await import('node:os');
 
 if (!process.stdin.isTTY) {
   console.log('Not in a terminal, exiting...');
@@ -40,11 +41,13 @@ function get_ip_address(family='IPv4') {
 //global variables and constants
 const DEFAULT_GAME_SERVER_ADDRESS = get_ip_address() //changes when connecting to remote server
 const DEFAULT_GAME_SERVER_PORT = 49152 //any number i want
+const MULTICAST_ADDRESS = '224.69.69.69'
 const MAP_WIDTH = 30
 const MAP_HEIGHT = 10
 const TILE_SIZE = 2;
 const INVINCIBILITY_FRAMES = 300
 const DELIMITER = 'µ'
+
 
 
 // Server code //
@@ -91,6 +94,47 @@ class Server extends EventEmitter {
       `);
       this.emit('start')
     })
+  }
+}
+
+class Multicast extends EventEmitter {
+  constructor(type='server') {
+    super()
+    this.type = type
+    this.server = dgram.createSocket('udp4');
+    this.server.on('error', (err) => {
+      console.log(`server error:\n${err.stack}`);
+      this.server.close();
+    });
+    this.server.on('message', (msg, rinfo) => {
+      console.log(`${this.type} got: ${msg} from ${rinfo.address}:${rinfo.port}`);
+      this.emit('message', msg, rinfo)
+    })
+  }
+  listen(cb=()=>{}) {
+    let port = 0; //any port
+    if (this.type === 'server') port = DEFAULT_GAME_SERVER_PORT
+    this.server.bind(port, undefined, () => {
+      this.server.setBroadcast(true);
+      this.server.setMulticastTTL(128);
+      this.server.addMembership(MULTICAST_ADDRESS);
+      const address = this.server.address();
+      DEBUG(`${this.type} listening ${address.address}:${address.port}`)
+      cb()
+    });
+  }
+  send(message) {
+    //broadcast message to all servers
+    DEBUG(`sending ${message} to all servers at ${MULTICAST_ADDRESS}:${DEFAULT_GAME_SERVER_PORT}`);
+    this.server.send(message, DEFAULT_GAME_SERVER_PORT, MULTICAST_ADDRESS);
+  }
+  send_to_client(message, port, address) {
+    //send message to specific client
+    DEBUG(`sending ${message} to client at ${address}:${port}`);
+    this.server.send(message, port, address);
+  }
+  close() {
+    this.server.close();
   }
 }
 
@@ -501,7 +545,10 @@ class Game {
 function start_game() {
   console.clear()
   DEBUG('loading')
+  //initialize the game
   const game = new Game()
+
+  //no code
 
   //initialize the game's server
   const game_server = new Server(DEFAULT_GAME_SERVER_PORT, DEFAULT_GAME_SERVER_ADDRESS, 'GameService')
@@ -568,6 +615,21 @@ function start_game() {
         DEBUG('unknown message type:', message);
     }
   })
+  
+  //initialize the discovery service for the game
+  const discovery = new Multicast('server')
+
+  discovery.on('message', (msg, client_info) => {
+    switch (msg.toString()) {
+      case 'LFG':
+        discovery.send_to_client('i am here', client_info.port, client_info.address)
+        break;
+      default:
+        DEBUG('unknown message:', msg.toString());
+        break;
+    }
+  });
+  discovery.listen()
 }
 
 
@@ -671,30 +733,11 @@ class Display {
     this.menu_title = ''
     this.op_animation = null //interval id for 'Nevermind...' animation
     this.player_client = null //the client to connect to the server
+    this.player_multicast = null //the multicast to find the server
     this.game_server_port = DEFAULT_GAME_SERVER_PORT
     this.game_server_address = DEFAULT_GAME_SERVER_ADDRESS
-    this.default_options = {
-      main: [
-        {id: 'play', name: 'Play game'},
-        {id: 'play_online', name: 'Play online in LAN'},
-        {id: 'quit', name: 'Nevermind'},
-      ],
-      play_online: [
-        {id: 'host', name: 'Enter Host', type: 'input', placeholder: 'XXX.XXX.X.X'},
-        {id: 'port', name: 'Enter Port', type: 'input', value: DEFAULT_GAME_SERVER_PORT.toString(), placeholder: 'XXXXX'},
-        {id: 'play_remote', name: 'Play together'},
-        {id: 'main', name: 'Return to menu'},
-      ],
-      server_close: [
-        {id: 'main', name: 'Return to menu'},
-        {id: 'quit', name: 'Nevermind'},
-      ],
-      death_screen: [
-        {id: 'play_again_remote', name: 'Reconnect'},
-        {id: 'main', name: 'Return to menu'},
-        {id: 'quit', name: 'Nevermind'},
-      ]
-    } //make this accessable for others to also then call show() with appropriate errors
+    this.current_options = []
+    this.current_index = 0
     this.COLORS = {
       reset: '\x1b[0m',
       message: '\x1b[38;5;45m',
@@ -723,31 +766,71 @@ class Display {
     process.stdin.setRawMode(true);
     process.stdin.setEncoding('utf-8');
   }  
-  async menu(type, options) {
+  async menu(type) {
+    const options = this.current_options
+    const selected_option = this.current_index
     //inside the options are stored values of previous screen
     switch(type) {
       case 'main':
-        //if accessed from death screen, close the player client
+        //reset any ongoing clients
         this.player_client?.close(false)
-        
+        this.player_multicast?.close()
+                
         this.menu_title = '\\\\ Main Menu //'
-        options = this.default_options.main
-        this.show(options)
+        this.current_options = [
+          {id: 'play', name: 'Play game'},
+          {id: 'play_online', name: 'Play online in LAN'},
+          {id: 'quit', name: 'Nevermind'},
+        ],
+
+        this.show(0)
       break;
       case 'play_online':
         this.menu_title = '\\\\ Play with friends //'
-        options = this.default_options.play_online
-        this.show(options)
+        this.current_options = [
+          // {id: 'host', name: 'Enter Host', type: 'input', placeholder: 'XXX.XXX.X.X'},
+          // {id: 'port', name: 'Enter Port', type: 'input', value: DEFAULT_GAME_SERVER_PORT.toString(), placeholder: 'XXXXX'},
+          // {id: 'play_remote', name: 'Play together'},
+          {id: 'main', name: 'Return to menu'},
+        ]
+
+        //fetch available servers
+        this.player_multicast = new Multicast('client')
+        this.player_multicast.listen(() => {
+          this.player_multicast.send('LFG')
+        })
+        this.player_multicast.on('message', (msg, rinfo) => {
+          //if a server is found, display it as an option
+          let server_found = { 
+            id: 'play_remote', 
+            name: `Join ${rinfo.address}:${rinfo.port}`,
+            value: {
+              address: rinfo.address,
+              port: rinfo.port
+            }}
+          this.current_options = [server_found, ...this.current_options]
+          this.current_index = 0 //fixes selection bug with multiple available servers
+          this.show(0)
+        });
+        
+        this.show(0)
         break;
       case 'server_close':
         this.menu_title = '\\\\ The server closed //'
-        options = this.default_options.server_close
-        this.show(options)
+        this.current_options = [
+          {id: 'main', name: 'Return to menu'},
+          {id: 'quit', name: 'Nevermind'},
+        ],
+        this.show(0)
         break;
       case 'death_screen':
         this.menu_title = '\\\\ You died //'
-        options = this.default_options.death_screen
-        this.show(options)
+        this.current_options = [
+          {id: 'play_again_remote', name: 'Reconnect'},
+          {id: 'main', name: 'Return to menu'},
+          {id: 'quit', name: 'Nevermind'},
+        ]
+        this.show(0)
         break;
       //cases for when a button is clicked, that is not another menu
       case 'play':
@@ -757,32 +840,34 @@ class Display {
         start_game()
         break;
       case 'play_remote':
-        const address_to_connect = options[0].value.trim()
-        const port_to_connect = options[1].value.trim()
+        //get the values from the options
+        // console.log('options: ', options);
+        // console.log('selected_option: ', selected_option);
+        const address_to_connect = options[selected_option].value.address
+        this.log(address_to_connect)
+        const port_to_connect = options[selected_option].value.port
         //check for legit host
         if (net.isIP(address_to_connect) < 1) {
-          options[0].error = 'Impossible host address'
-          this.show(options, 0)
+          options[selected_option].error = 'Impossible host address'
+          this.show()
           break;
         }
         //check for legit port
         if (!/^\d{4,5}$/.test(port_to_connect)) {
-          options[1].error = 'Impossible port'
-          this.show(options, 1)
+          options[selected_option].error = 'Impossible port'
+          this.show()
           break;
         }
-        //notify player that it is connecting
-        options = this.default_options.play_online
-        options[2].message = 'Connecting...'
-        this.show(options, 2)
+        // notify that it is connecting
+        options[selected_option].message = 'Connecting...'
+        this.show()
+
         //start game but with a remote server
         this.game_server_address = address_to_connect
         this.game_server_port = port_to_connect
         this.player_connect()
         break    
       case 'play_again_remote':
-        //playing again has 'options' variable changed, so more switch cases
-        // this.player_connect()
         this.player_join()
         break
       case 'quit':
@@ -795,8 +880,10 @@ class Display {
         break;
     }
   }
-  show(options, selected_index=0) {
-    //private function, only to be used by itself or by this.menu()
+  show(index) {
+    const options = this.current_options
+    const selected_index = index ?? this.current_options[this.current_index] ? this.current_index : 0
+    this.log(selected_index);
     console.clear()
     console.log('Welcome to TerminaRPG');
     console.log(this.menu_title);
@@ -837,12 +924,10 @@ class Display {
         }
       }
     })
-
     //clean up the animation
     if (options[selected_index].id !== 'quit') clearInterval(this.op_animation)
     
     process.stdin.removeAllListeners('keypress')
-
     process.stdin.on('keypress', (str, key) => {
       if (key.ctrl && key.name === 'c') {
         process.exit();
@@ -850,20 +935,22 @@ class Display {
       else if (key.name === 'down') {
         if (selected_index < options.length - 1) {
           options[selected_index].error = '' //cleanse its error
-          this.show(options, selected_index+1)
+          this.current_index = selected_index+1
+          this.show()
         }
       }
       else if (key.name === 'up') {
         if (selected_index > 0) {
           options[selected_index].error = '' //cleanse its error
-          this.show(options, selected_index-1)
+          this.current_index = selected_index-1
+          this.show()
         }
       }
       else if (key.name === 'return') {
         if (options[selected_index].type !== 'input') {
           //only enter menu if it is not an input
           process.stdin.removeAllListeners('keypress')
-          this.menu(options[selected_index].id, options)
+          this.menu(options[selected_index].id)
         }
       }
       //on key press
@@ -887,7 +974,7 @@ class Display {
           }
           //and then always
           options[selected_index].error = '' //cleanse its error after changing value
-          this.show(options, selected_index) //reload the screen
+          this.show() //reload the screen
         }
       }
     });
@@ -1047,10 +1134,11 @@ class Display {
     this.player_client.on('connection_timeout', () => {
       this.player_client.close() //close the client
       //go back to the play_online menu
-      const options = this.default_options.play_online
-      options[2].message = ''
-      options[2].error = 'Connection failed'
-      this.show(options, 2)
+      const options = this.current_options
+      const index = this.current_index
+      options[index].message = ''
+      options[index].error = 'Connection failed'
+      this.show()
       //cant find another way to display error messages from outside
     })
   
