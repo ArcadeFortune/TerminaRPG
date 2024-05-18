@@ -103,11 +103,11 @@ class Multicast extends EventEmitter {
     this.type = type
     this.server = dgram.createSocket('udp4');
     this.server.on('error', (err) => {
-      console.log(`server error:\n${err.stack}`);
+      DEBUG(`server error:\n${err.stack}`);
       this.server.close();
     });
     this.server.on('message', (msg, rinfo) => {
-      console.log(`${this.type} got: ${msg} from ${rinfo.address}:${rinfo.port}`);
+      DEBUG(`${this.type} got: ${msg} from ${rinfo.address}:${rinfo.port}`);
       this.emit('message', msg, rinfo)
     })
   }
@@ -418,7 +418,7 @@ class Game {
         else legal = false
         break;
       default:
-        console.log('Unkown direction:', direction);
+        DEBUG('Unkown direction:', direction);
         break;
     }
 
@@ -668,7 +668,6 @@ class Client extends EventEmitter {
     })
 
     this.socket.on('data', (data) => {
-      // console.log('FOUND DATA AHHH', data.toString());
       data = data.toString()
       data.split(DELIMITER).slice(0, -1).forEach(task => this.emit('message', JSON.parse(task)))
     })
@@ -841,10 +840,7 @@ class Display {
         break;
       case 'play_remote':
         //get the values from the options
-        // console.log('options: ', options);
-        // console.log('selected_option: ', selected_option);
         const address_to_connect = options[selected_option].value.address
-        this.log(address_to_connect)
         const port_to_connect = options[selected_option].value.port
         //check for legit host
         if (net.isIP(address_to_connect) < 1) {
@@ -1114,7 +1110,7 @@ class Display {
           this.update(message.data)
           break;
         default: 
-          console.log('Unknown message received from server: ', message);
+          DEBUG('Unknown message received from server: ', message);
       }
       //move the cursor below the map
       readline.cursorTo(process.stdout, 0, MAP_HEIGHT*TILE_SIZE)
