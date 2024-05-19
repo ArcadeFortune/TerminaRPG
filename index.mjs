@@ -44,9 +44,14 @@ function get_ip_address(family='IPv4') {
 }
 
 //global variables and constants
+const TITLE = `Welcome to TerminaRPG
+           ▔▔▔▔▔▔▔▔▔▔`
 const DEFAULT_GAME_SERVER_ADDRESS = get_ip_address() //changes when connecting to remote server
 const DEFAULT_GAME_SERVER_PORT = 49152 //any number i want
 const MULTICAST_ADDRESS = '224.69.69.69'
+const DEFAULT_SCREEN_WIDTH = 90
+const DEFAULT_SCREEN_HEIGHT = 24
+const DEFAULT_CHAT_HEIGHT = 5
 const MAP_WIDTH = 30
 const MAP_HEIGHT = 10
 const TILE_SIZE = 2;
@@ -506,8 +511,6 @@ class Game {
             this.event.emit('happening', { type: 'scoreboard', data: this.scoreboard.toString() })
             this.event.emit('happening', { type: 'kill', killer: entity.toString(), victim: enemy.toString()})
           }
-          //
-          
         } else {
           //update the damage frames to the players
           this.event.emit('happening', { 
@@ -736,6 +739,9 @@ class Client extends EventEmitter {
 
 class Display {
   constructor() {
+    this.screen_width = DEFAULT_SCREEN_WIDTH
+    this.screen_height = DEFAULT_SCREEN_HEIGHT
+    this.chat_height = DEFAULT_CHAT_HEIGHT
     this.is_in_intro = false
     this.is_in_death_screen = false
     this.scoreboard = []
@@ -785,11 +791,12 @@ class Display {
         //reset any ongoing clients
         this.player_client?.close(false)
         this.player_multicast?.close()
-                
+
         this.menu_title = '\\\\ Main Menu //'
         this.current_options = [
           {id: 'play', name: 'Play game'},
           {id: 'play_online', name: 'Play online in LAN'},
+          {id: 'settings', name: 'Settings'},
           {id: 'quit', name: 'Nevermind'},
         ],
 
@@ -824,6 +831,26 @@ class Display {
         });
         
         this.show(0)
+        break;
+      case 'settings':
+        this.menu_title = '\\\\ Settings //'
+        this.current_options = [
+          {id: 'screen_size', name: 'Change screen size'},
+          {id: 'main', name: 'Return to menu'},
+        ]
+        this.show(0)
+        break;
+      case 'screen_size':
+        this.menu_title = '\\\\ How much space do you have? //'
+        this.current_options = [
+          //ids here have to match their respective values, like: this.screen_width
+          {id: 'screen_width', name: 'Width', type: 'slider', value: this.screen_width},
+          {id: 'screen_height', name: 'Height', type: 'slider', value: this.screen_height},
+          {id: 'chat_height', name: 'Chat Height', type: 'slider', value: this.chat_height},
+          {id: 'settings', name: 'Return to settings'},
+          {id: 'main', name: 'Return to menu'},
+        ]
+        this.show(0, true)
         break;
       case 'server_close':
         this.menu_title = '\\\\ The server closed //'
@@ -887,18 +914,24 @@ class Display {
         break;
     }
   }
-  show(index) {
+  show(index, screen_borders=false) {
     const options = this.current_options
     const selected_index = index ?? this.current_options[this.current_index] ? this.current_index : 0
     this.log(selected_index);
     console.clear()
-    console.log('Welcome to TerminaRPG');
+    //if we need to show the screen borders
+    if (screen_borders) this.draw_border() 
+
+    console.log(TITLE);
     console.log(this.menu_title);
     console.log();
 
+    //render each of the options
     options.forEach((option, index) => {
-      if (!option.type) option.type = 'select' //default option type
-      if (option.type === 'input' && !option.value) option.value = '' //empty initial value
+      //set defaults
+      if (!option.type) option.type = 'select'
+      if (option.type === 'input' && !option.value) option.value = ''
+
       //special animation for the 'Nevermind'
       if (option.id === 'quit' && index === selected_index) {
         process.stdout.write(`${this.COLORS.pure_white}> ${option.name}.         ${this.COLORS.reset}\r`)
@@ -909,7 +942,8 @@ class Display {
           if (i === 3) i = 0
           else i++
         }, 500)
-      } 
+      }
+      //render the options
       else {
         if (index === selected_index) {
           console.log(this.COLORS.pure_white + '> ' + option.name + this.COLORS.reset); //highlight selected
@@ -921,9 +955,15 @@ class Display {
           //print the other option
           console.log(' ' + option.name);
         }
+
+        //print stuff beneath an option
         if (index === selected_index && option.type === 'input') {
           process.stdout.write('  ') //margin
           console.log(option.value || this.COLORS.placeholder + (option.placeholder || '') + this.COLORS.reset);
+        }
+        if (index === selected_index && option.type === 'slider') {
+          process.stdout.write(' ') //less margin for the symbols
+          console.log(`${this.COLORS.pure_white}- ${option.value} +${this.COLORS.reset}`);
         }
         if (index === selected_index && option.error) {
           process.stdout.write('  ') //margin
@@ -931,9 +971,11 @@ class Display {
         }
       }
     })
+
     //clean up the animation
     if (options[selected_index].id !== 'quit') clearInterval(this.op_animation)
     
+
     process.stdin.removeAllListeners('keypress')
     process.stdin.on('keypress', (str, key) => {
       if (key.ctrl && key.name === 'c') {
@@ -943,19 +985,37 @@ class Display {
         if (selected_index < options.length - 1) {
           options[selected_index].error = '' //cleanse its error
           this.current_index = selected_index+1
-          this.show()
+          this.show(selected_index+1, screen_borders)
         }
       }
       else if (key.name === 'up') {
         if (selected_index > 0) {
           options[selected_index].error = '' //cleanse its error
           this.current_index = selected_index-1
-          this.show()
+          this.show(selected_index-1, screen_borders)
+        }
+      }
+      else if (key.name === 'left') {
+        //if it is a slider
+        if (options[selected_index].type === 'slider') {
+          const new_value = Math.max(options[selected_index].value - 1, 1) //cannot go below 1
+          options[selected_index].value = new_value
+          this[options[selected_index].id] = new_value
+          this.show(selected_index, screen_borders)
+        }
+      }
+      else if (key.name === 'right') {
+        //if it is a slider
+        if (options[selected_index].type === 'slider') {
+          const new_value = options[selected_index].value + 1
+          options[selected_index].value = new_value
+          this[options[selected_index].id] = new_value
+          this.show(selected_index, screen_borders)
         }
       }
       else if (key.name === 'return') {
-        if (options[selected_index].type !== 'input') {
-          //only enter menu if it is not an input
+        //only enter menu if it is a select
+        if (options[selected_index].type === 'select') {
           process.stdin.removeAllListeners('keypress')
           this.menu(options[selected_index].id)
         }
@@ -981,7 +1041,7 @@ class Display {
           }
           //and then always
           options[selected_index].error = '' //cleanse its error after changing value
-          this.show() //reload the screen
+          this.show(selected_index, screen_borders) //reload the screen
         }
       }
     });
@@ -997,6 +1057,7 @@ class Display {
         //skip the animation
         if (this.is_in_intro) return this.is_in_intro = false
         //and if already skipped go to main menu
+        process.stdout.write(this.COLORS.reset) //clean up the colors
         this.menu(next_menu)
       }
     });
@@ -1010,7 +1071,8 @@ class Display {
       console.clear();
       displayedString.push(message[i])
       process.stdout.write(`\x1b[38;5;${Math.min(Math.max(255-message.length, 232)+Math.round(i/(message.length/23)), 255)}m${displayedString.join('')}`);
-      await new Promise(resolve => setTimeout(resolve, 50));
+      //wait for a delay so it the intro always takes exactly 2 seconds, no matter how long the text is
+      await new Promise(resolve => setTimeout(() => {resolve()}, 2000/message.length))
     }
     this.is_in_intro = false
   }
@@ -1084,6 +1146,32 @@ class Display {
     })
     process.stdout.write(this.COLORS.reset)
   }
+  draw_border() {
+    //function that draws the bottom and right border of the screen
+    const width = this.screen_width
+    const height = this.screen_height
+    const chat_height = this.chat_height
+    const char = '#'
+    // const char = '#'.repeat(tile_size)
+
+    // Escape sequences to move the cursor
+    const ESC = '\x1b';
+    const moveCursor = (row, col) => `${ESC}[${row};${col}H`;
+    
+    // Draw the right border
+    for (let row = 1; row <= height; row++) {
+        process.stdout.write(moveCursor(row, width) + char);
+    }
+
+    // Draw the bottom border
+    process.stdout.write(moveCursor(height, 1) + char.repeat(width)); //optimize a bit
+
+    // Draw the chat border
+    process.stdout.write(moveCursor(height-chat_height, 1) + char.repeat(width)); //optimize a bit
+    
+    //reset the cursor to the top left
+    process.stdout.write('\x1b[1;1H')
+}
   player_connect() {
     //initialize the player's client
     this.player_client = new Client(this.game_server_port, this.game_server_address, 'PlayerService')
@@ -1115,7 +1203,6 @@ class Display {
             message.player.health = 0 //on death, the players health is resest, so we manually change it
             setTimeout(() => this.menu('death'), INVINCIBILITY_FRAMES)
           }
-          // this.scoreboard[message.killer] = this.scoreboard[message.killer] || {kills: 0, deaths: 0}
           break;
         case 'changes':
           this.update(message.data)
@@ -1174,4 +1261,4 @@ class Display {
 }
 
 const display = new Display()
-display.intro('Welcome to TerminaRPG\nPress any key to start\n')
+display.intro(`${TITLE}\nMade by ArcadeFortune\n`)
