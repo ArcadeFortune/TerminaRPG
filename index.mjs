@@ -49,8 +49,8 @@ const TITLE = `Welcome to TerminaRPG
 const DEFAULT_GAME_SERVER_ADDRESS = get_ip_address() //changes when connecting to remote server
 const DEFAULT_GAME_SERVER_PORT = 49152 //any number i want
 const MULTICAST_ADDRESS = '224.69.69.69'
-const DEFAULT_SCREEN_WIDTH = 90
-const DEFAULT_SCREEN_HEIGHT = 24
+const DEFAULT_SCREEN_WIDTH = process.stdout.columns
+const DEFAULT_SCREEN_HEIGHT = process.stdout.rows
 const DEFAULT_CHAT_HEIGHT = 5
 const MAP_WIDTH = 30
 const MAP_HEIGHT = 10
@@ -847,6 +847,7 @@ class Display {
           {id: 'screen_width', name: 'Width', type: 'slider', value: this.screen_width},
           {id: 'screen_height', name: 'Height', type: 'slider', value: this.screen_height},
           {id: 'chat_height', name: 'Chat Height', type: 'slider', value: this.chat_height},
+          {id: 'screen_reset', name: 'Reset to default'},
           {id: 'settings', name: 'Return to settings'},
           {id: 'main', name: 'Return to menu'},
         ]
@@ -904,6 +905,12 @@ class Display {
       case 'play_again_remote':
         this.player_join()
         break
+      case 'screen_reset':
+        this.screen_width = DEFAULT_SCREEN_WIDTH
+        this.screen_height = DEFAULT_SCREEN_HEIGHT
+        this.chat_height = DEFAULT_CHAT_HEIGHT
+        this.show(0, true)
+        break;
       case 'quit':
         console.clear()
         console.log('bye')
@@ -963,7 +970,7 @@ class Display {
         }
         if (index === selected_index && option.type === 'slider') {
           process.stdout.write(' ') //less margin for the symbols
-          console.log(`${this.COLORS.pure_white}- ${option.value} +${this.COLORS.reset}`);
+          console.log(`${this.COLORS.pure_white}- ${this[options[selected_index].id]} +${this.COLORS.reset}`);
         }
         if (index === selected_index && option.error) {
           process.stdout.write('  ') //margin
@@ -998,18 +1005,19 @@ class Display {
       else if (key.name === 'left') {
         //if it is a slider
         if (options[selected_index].type === 'slider') {
-          const new_value = Math.max(options[selected_index].value - 1, 1) //cannot go below 1
-          options[selected_index].value = new_value
-          this[options[selected_index].id] = new_value
+          // const new_value = Math.max(options[selected_index].value - 1, 1) //cannot go below 1
+          // options[selected_index].value = new_value
+          // this[options[selected_index].id] = new_value
+          this[options[selected_index].id] = this[options[selected_index].id] - 1
           this.show(selected_index, screen_borders)
         }
       }
       else if (key.name === 'right') {
         //if it is a slider
         if (options[selected_index].type === 'slider') {
-          const new_value = options[selected_index].value + 1
-          options[selected_index].value = new_value
-          this[options[selected_index].id] = new_value
+          // const new_value = options[selected_index].value + 1
+          // options[selected_index].value = new_value
+          this[options[selected_index].id] = this[options[selected_index].id] + 1
           this.show(selected_index, screen_borders)
         }
       }
