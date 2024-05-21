@@ -315,6 +315,7 @@ class Game {
 
     //add him to the scoreboard with the kills and deaths
     this.scoreboard.add(player)
+
     //notify the other players
     this.event.emit('happening', { 
       type: 'join',
@@ -614,12 +615,12 @@ function start_game() {
   game_server.on('message', (message, socket) => {
     // DEBUG(`Got message from player ${socket.player}:`, message);
     switch (message.type) {
-      case 'map':
-        socket.write(JSON.stringify({type: 'map', data: game.string_map()}) + DELIMITER)
-        break;
       case 'join':
+        //register the player
         game.join(socket.player)
-        // socket.write(JSON.stringify({type: 'map', data: game.string_map()}) + DELIMITER)
+        
+        //send the initial map to the player
+        socket.write(JSON.stringify({type: 'map', data: game.string_map(), player: socket.player}) + DELIMITER)
         break;
       case 'move':
         game.move(socket.player, message.data.action, message.data.direction)
@@ -633,6 +634,7 @@ function start_game() {
   //initialize the discovery service for the game
   const discovery = new Multicast('server')
 
+  //when a player is looking for a game
   discovery.on('message', (msg, client_info) => {
     switch (msg.toString()) {
       case 'LFG':
@@ -924,7 +926,6 @@ class Display {
   show(index, screen_borders=false) {
     const options = this.current_options
     const selected_index = index ?? this.current_options[this.current_index] ? this.current_index : 0
-    this.log(selected_index);
     console.clear()
     //if we need to show the screen borders
     if (screen_borders) this.draw_border() 
@@ -1115,7 +1116,6 @@ class Display {
 
   }
   render_health(amount) {
-    //if the health has changed, set the color to red
     let health = ''
     for (let i = 0; i < amount; i++) {
       health += '♥ '
@@ -1179,7 +1179,7 @@ class Display {
     
     //reset the cursor to the top left
     process.stdout.write('\x1b[1;1H')
-}
+  }
   player_connect() {
     //initialize the player's client
     this.player_client = new Client(this.game_server_port, this.game_server_address, 'PlayerService')
@@ -1250,9 +1250,8 @@ class Display {
   }
   player_join() {
     this.is_in_death_screen = false
-    this.player_client.send({}, 'map')
     this.player_client.send({}, 'join')
-    this.to_log = [] //clear any previous messages
+    // this.to_log = [] //clear any previous messages
   
     //give keyboard control to the player
     process.stdin.removeAllListeners('keypress')
