@@ -807,13 +807,11 @@ class Display {
       case 'play_online':
         this.menu_title = '\\\\ Play with friends //'
         this.current_options = [
-          // {id: 'host', name: 'Enter Host', type: 'input', placeholder: 'XXX.XXX.X.X'},
-          // {id: 'port', name: 'Enter Port', type: 'input', value: DEFAULT_GAME_SERVER_PORT.toString(), placeholder: 'XXXXX'},
-          // {id: 'play_remote', name: 'Play together'},
+          {id: 'play_remote', name: 'Join game via IP', type: 'select', input: true, placeholder: 'XXX.XXX.X.X'},
           {id: 'main', name: 'Return to menu'},
         ]
 
-        //fetch available servers
+        //start to look for available servers
         this.player_multicast = new Multicast('client')
         this.player_multicast.listen(() => {
           this.player_multicast.send('LFG')
@@ -823,10 +821,8 @@ class Display {
           let server_found = { 
             id: 'play_remote', 
             name: `Join ${rinfo.address}:${rinfo.port}`,
-            value: {
-              address: rinfo.address,
-              port: rinfo.port
-            }}
+            value: rinfo.address,
+          }
           this.current_options = [server_found, ...this.current_options]
           this.current_index = 0 //fixes selection bug with multiple available servers
           this.show(0)
@@ -874,24 +870,16 @@ class Display {
         break;
       //cases for when a button is clicked, that is not another menu
       case 'play':
-        //reset the server address and port
+        //reset the server address
         this.game_server_address = DEFAULT_GAME_SERVER_ADDRESS
-        this.game_server_port = DEFAULT_GAME_SERVER_PORT
         start_game()
         break;
       case 'play_remote':
         //get the values from the options
-        const address_to_connect = options[selected_option].value.address
-        const port_to_connect = options[selected_option].value.port
+        const address_to_connect = options[selected_option].value
         //check for legit host
         if (net.isIP(address_to_connect) < 1) {
-          options[selected_option].error = 'Impossible host address'
-          this.show()
-          break;
-        }
-        //check for legit port
-        if (!/^\d{4,5}$/.test(port_to_connect)) {
-          options[selected_option].error = 'Impossible port'
+          options[selected_option].error = 'Impossible host address' + selected_option
           this.show()
           break;
         }
@@ -901,7 +889,6 @@ class Display {
 
         //start game but with a remote server
         this.game_server_address = address_to_connect
-        this.game_server_port = port_to_connect
         this.player_connect()
         break    
       case 'play_again_remote':
@@ -938,7 +925,7 @@ class Display {
     options.forEach((option, index) => {
       //set defaults
       if (!option.type) option.type = 'select'
-      if (option.type === 'input' && !option.value) option.value = ''
+      if (option.input && !option.value) option.value = ''
 
       //special animation for the 'Nevermind'
       if (option.id === 'quit' && index === selected_index) {
@@ -955,17 +942,13 @@ class Display {
       else {
         if (index === selected_index) {
           console.log(this.COLORS.pure_white + '> ' + option.name + this.COLORS.reset); //highlight selected
-          if (option.message) {
-            process.stdout.write('  ') //margin
-            console.log(this.COLORS.message + option.message + this.COLORS.reset);
-          }
         } else {
           //print the other option
           console.log(' ' + option.name);
         }
 
         //print stuff beneath an option
-        if (index === selected_index && option.type === 'input') {
+        if (index === selected_index && option.input) {
           process.stdout.write('  ') //margin
           console.log(option.value || this.COLORS.placeholder + (option.placeholder || '') + this.COLORS.reset);
         }
@@ -973,7 +956,12 @@ class Display {
           process.stdout.write(' ') //less margin for the symbols
           console.log(`${this.COLORS.pure_white}- ${this[options[selected_index].id]} +${this.COLORS.reset}`);
         }
-        if (index === selected_index && option.error) {
+        if (index === selected_index && option.message) {
+          process.stdout.write('  ') //margin
+          console.log(this.COLORS.message + option.message + this.COLORS.reset);
+        }
+        //should not show errors and messages at the same time
+        else if (index === selected_index && option.error) {
           process.stdout.write('  ') //margin
           console.log(this.COLORS.error + option.error + this.COLORS.reset);
         }
@@ -1026,13 +1014,14 @@ class Display {
         //only enter menu if it is a select
         if (options[selected_index].type === 'select') {
           process.stdin.removeAllListeners('keypress')
+          this.current_index = selected_index //save the selected index
           this.menu(options[selected_index].id)
         }
       }
       //on key press
       else {
         //if an input is currently focused
-        if (options[selected_index].type === 'input') { 
+        if (options[selected_index].input) { 
           //backspace has now sepcial ability
           if (key.name === 'backspace') { 
             //it visually removes one character
