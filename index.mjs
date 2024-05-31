@@ -668,6 +668,8 @@ function server(cb_on_server_start=()=>{}) {
     socket.prevPlayer = {  }
     socket.setEncoding('utf-8');
     clients.push(socket)
+    //register the player
+    game.join(socket.player)
 
     //handle the data from the client
     socket.on('data', (data) => {
@@ -677,8 +679,8 @@ function server(cb_on_server_start=()=>{}) {
 
         switch (message.type) {
           case 'join':
-            //register the player
-            game.join(socket.player)            
+            //register the player only if they are off the map
+            if (!socket.player.position.x && !socket.player.position.y) game.join(socket.player)            
             //send the full map to the player
             socket.write(JSON.stringify({type: 'map', data: game.string_map(socket.player), player: socket.player}) + DELIMITER)
             DEBUG(`>> Player ${socket.player} joined`);
@@ -704,6 +706,7 @@ function server(cb_on_server_start=()=>{}) {
     //handle the disconnection of the client
     socket.on('close', () => {
       DEBUG(`>> Player ${socket.player} disconnected.`)
+      console.log('socket.player: ', socket.player);
       game.leave(socket.player)
       game.off('happening', handle_new_changes)
       delete socket.player
@@ -1185,7 +1188,7 @@ function client() {
   
           //start game but with a remote server
           this.game_server_address = address_to_connect
-          this.game_server_port = options[selected_option+1].value
+          this.game_server_port = parseInt(options[options.length-2].value)
           this.client.connect()
           break    
         case 'play_again_remote':
