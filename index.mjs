@@ -1000,11 +1000,12 @@ function client() {
                   //when he finished
                   rl.question('> ', (message) => {
                     this.state = 'ingame';
-                    //send the message
-                    this.client.send({message}, 'chat'); 
                     //clean up
                     readline.moveCursor(process.stdout, 0, -1);
                     readline.clearLine(process.stdout, 1);
+                    if (message.trim() === '') return
+                    //send the message
+                    this.client.send({message}, 'chat'); 
                   })                
                   break
                 default:
