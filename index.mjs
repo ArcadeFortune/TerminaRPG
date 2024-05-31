@@ -133,6 +133,7 @@ class Multicast extends EventEmitter {
 function server(cb_on_server_start=()=>{}) {
   const MAP_WIDTH = 30
   const MAP_HEIGHT = 10
+  const PLAYER_RENDER_DISTANCE = 7
     
   //allow the server to be stopped by user input
   process.stdin.removeAllListeners('keypress')
@@ -181,7 +182,10 @@ function server(cb_on_server_start=()=>{}) {
       this.default_strength = 1
       this.health = this.default_health
       this.strength = this.default_strength
-      this.position = {}
+      this.position = {
+        x: null,
+        y: null
+      }
       this.number = 0
     }
     toString() {
@@ -291,13 +295,23 @@ function server(cb_on_server_start=()=>{}) {
     }
     /**
      * takes the current map and creates a copy array of it
+     * @param {Player} player
      * @returns a string representation of the map in an array
      */
-    string_map() {
+    string_map(player) {
       const map = []
-      for (let i = 0; i < this.map.length; i++) {
+      const start_x = 0
+      const start_y = 0
+      const end_x = this.map[0].length
+      const end_y = this.map.length
+      //render distance for another day
+      // const start_x = Math.max(0, player.position.x - PLAYER_RENDER_DISTANCE);
+      // const start_y = Math.max(0, player.position.y - PLAYER_RENDER_DISTANCE);
+      // const end_x = Math.min(this.map[0].length, player.position.x + PLAYER_RENDER_DISTANCE + 1);
+      // const end_y = Math.min(this.map.length, player.position.y + PLAYER_RENDER_DISTANCE + 1);
+      for (let i = start_y; i < end_y; i++) {
         let row = ''
-        for (let j = 0; j < this.map[i].length; j++) {
+        for (let j = start_x; j < end_x; j++) {
           row += this.map[i][j].toString()
         }
         map.push(row)
@@ -665,11 +679,20 @@ function server(cb_on_server_start=()=>{}) {
             //register the player
             game.join(socket.player)            
             //send the full map to the player
-            socket.write(JSON.stringify({type: 'map', data: game.string_map(), player: socket.player}) + DELIMITER)
+            socket.write(JSON.stringify({type: 'map', data: game.string_map(socket.player), player: socket.player}) + DELIMITER)
             DEBUG(`>> Player ${socket.player} joined`);
             break;
           case 'move':
             game.move(socket.player, message.data.action, message.data.direction)
+            break;
+          case 'map':
+            socket.write(JSON.stringify({type: 'map', data: game.string_map(socket.player), player: socket.player}) + DELIMITER)
+            break;
+          case 'chat':
+            //remove the escape sequences from the message
+            const clean_message = message.data.message.replace(/\x1B\[A|\x1B\[B/g, '')
+            //send the message to all players
+            game.emit('happening', { type: 'chat', data: { message: clean_message, who: socket.player.toString() } })
             break;
           default:
             DEBUG('!! unknown message type:', message);
@@ -764,20 +787,22 @@ function server(cb_on_server_start=()=>{}) {
 function client() {
   const TITLE = `Welcome to TerminaRPG\n           ▔▔▔▔▔▔▔▔▔▔`
   const DEFAULT_SCREEN_WIDTH = process.stdout.columns
-  const DEFAULT_SCREEN_HEIGHT = process.stdout.rows
-  const DEFAULT_CHAT_HEIGHT = 5
+  const DEFAULT_SCREEN_HEIGHT = 20
+  const DEFAULT_CHAT_HEIGHT = process.stdout.rows - DEFAULT_SCREEN_HEIGHT - 3
+  // const DEFAULT_SCREEN_HEIGHT = process.stdout.rows - DEFAULT_CHAT_HEIGHT
   const TILE_SIZE = 2;
 
   class Display {
     constructor() {
       //ingame variables
       this.screen_width = DEFAULT_SCREEN_WIDTH
-      //will change
-      this.screen_height = 10 * TILE_SIZE
-      // this.screen_height = DEFAULT_SCREEN_HEIGHT
+      this.screen_height = DEFAULT_SCREEN_HEIGHT
       this.chat_height = DEFAULT_CHAT_HEIGHT
       this.scoreboard = []
-      this.to_log = []
+      this.chat_log = []
+      this.writing_message = ''
+      this.chat = (msg) => this.chat_log.push(msg)
+      this.clear_chat = () => this.chat_log = []
       this.player = {}
       this.update_player = (new_stats) => Object.assign(this.player, new_stats)
       //menu variables
@@ -858,7 +883,7 @@ function client() {
                   break;
                 case 'join': 
                   //log in chat
-                  this.to_log.push(`Player ${message.data[0].what} joined`)
+                  this.chat(`Player ${message.data[0].what} joined`)
                   //there is no break here because a join message
                   //should also update the map
                   //meaning this.update should be called anyway
@@ -873,15 +898,15 @@ function client() {
                 case 'kill':
                   //if the killer is undefined
                   if (!message.killer) {
-                    this.to_log.push(`Player ${message.victim} left`)
+                    this.chat(`Player ${message.victim} left`)
                   }
                   //else if killer is not a player
                   else if (isNaN(parseInt(message.killer))) {
-                    this.to_log.push(`Player ${message.victim} died`)
+                    this.chat(`Player ${message.victim} died`)
                   }
                   //if both are players
                   else {
-                    this.to_log.push(`Player ${message.killer} killed player ${message.victim}`)
+                    this.chat(`Player ${message.killer} killed player ${message.victim}`)
                   }
                   //if this client dies, go to the death screen
                   if (parseInt(message.victim) === parseInt(this.player.number)) {
@@ -889,22 +914,27 @@ function client() {
                     setTimeout(() => this.menu('death'), INVINCIBILITY_FRAMES)
                   }
                   break;
+                case 'chat':
+                  this.chat(`Player ${message.data.who}: ${message.data.message}`)
+                  break;
                 default: 
                   DEBUG('Unknown message received from server: ', message);
               }
 
               //move the cursor below the map
               readline.cursorTo(process.stdout, 0, this.screen_height)
-
               // //this will move the curosr to the bottom right of the terminal
               // readline.cursorTo(process.stdout, this.rl.output.columns, this.rl.output.rows)
-
               let color = this.COLORS.reset
+
               //if the player is damaged, render the hearts red
               if (this.player.damaged) color = '\x1b[38;5;196m'
               console.log(color + this.render_health(this.player.health) + this.COLORS.reset);
-              console.table(this.scoreboard);
-              this.to_log.forEach(message => console.log(message + '                        '))
+
+              this.chat_log.slice(-this.chat_height).forEach(message => console.log(message + '                        '))
+              //temporarly remove the scoreboard, it messes with the chat size
+              // console.table(this.scoreboard);
+              // this.draw_border()
             })
           })
         },
@@ -920,13 +950,16 @@ function client() {
         join: () => {
           this.state = 'ingame'
           this.client.send({}, 'join')
-          //clear any previous messages
-          this.to_log = []
+          this.clear_chat()
           //give keyboard control to the player
           process.stdin.removeAllListeners('keypress')
           process.stdin.on('keypress', (str, key) => {
             if (key.ctrl && key.name === 'c') {
               process.exit(0);
+            }
+            else if (this.state === 'inchat') {
+              rl.write(key.sequence.replace(/\x1B\[A|\x1B\[B/g, ''))
+              readline.clearLine(process.stdout, 1);
             }
             else {
               //#region key bindings
@@ -958,12 +991,27 @@ function client() {
                 case 'e':
                   display.log_ip()
                   break;
+                case 'c':
+                  this.client.send({}, 'map')
+                  break;
+                case 'return':
+                  //let the user write something
+                  this.state = 'inchat'
+                  //when he finished
+                  rl.question('> ', (message) => {
+                    this.state = 'ingame';
+                    //send the message
+                    this.client.send({message}, 'chat'); 
+                    //clean up
+                    readline.moveCursor(process.stdout, 0, -1);
+                    readline.clearLine(process.stdout, 1);
+                  })                
+                  break
                 default:
                   process.stdout.write(`Button ${key.name} unknown.             \r`)
                   break;
               }
             }
-
           });
         },
         close: (reason) => {
@@ -1340,13 +1388,6 @@ function client() {
       this.state = 'intro_skipped'
     }
     /**
-     * log a message to the chat
-     * @param {String} data 
-     */
-    log(data) {
-      this.to_log.push(data)
-    }
-    /**
      * log the ip of the server
      */
     log_ip() {
@@ -1454,7 +1495,7 @@ function client() {
       const moveCursor = (row, col) => `${ESC}[${row};${col}H`;
       
       // Draw the right border
-      for (let row = 1; row <= height; row++) {
+      for (let row = 1; row <= height+chat_height; row++) {
           process.stdout.write(moveCursor(row, width) + char);
       }
   
@@ -1462,7 +1503,7 @@ function client() {
       process.stdout.write(moveCursor(height, 1) + char.repeat(width));
   
       // Draw the chat border
-      process.stdout.write(moveCursor(height-chat_height, 1) + char.repeat(width));
+      process.stdout.write(moveCursor(height+chat_height, 1) + char.repeat(width));
       
       //reset the cursor to the top left
       process.stdout.write('\x1b[1;1H')
