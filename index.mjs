@@ -5,7 +5,7 @@ const dgram = await import('node:dgram');
 const readline = await import('node:readline');
 const { EventEmitter } = await import('node:events');
 
-if (!process.stdin.isTTY) {
+if (!process.stdin.isTTY && process.argv.length <= 2) {
   console.log('Not in a terminal, exiting...');
   process.exit(1);
 }
@@ -1067,8 +1067,8 @@ function client() {
 
           this.menu_title = '|| Main Menu ||'
           this.current_options = [
-            {id: 'play', name: 'Play game'},
-            {id: 'play_online', name: 'Play online in LAN'},
+            {id: 'play', name: 'Play'},
+            {id: 'play_online', name: 'Play online'},
             {id: 'settings', name: 'Settings'},
             {id: 'quit', name: 'Nevermind'},
           ],
