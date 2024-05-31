@@ -52,6 +52,11 @@ const INVINCIBILITY_FRAMES = 300
 //sometimes multiple data combines into one
 //the delimiter is used to split them correctly
 const DELIMITER = 'µ'
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  prompt: '',
+});
 
 /**
  * Multicast class
@@ -128,7 +133,15 @@ class Multicast extends EventEmitter {
 function server(cb_on_server_start=()=>{}) {
   const MAP_WIDTH = 30
   const MAP_HEIGHT = 10
-  
+    
+  //allow the server to be stopped by user input
+  process.stdin.removeAllListeners('keypress')
+  process.stdin.on('keypress', (str, key) => {
+    if (key.ctrl && key.name === 'c') {
+      process.exit(0);
+    }
+  });
+
   function DEBUG(...text) {
     //the client calls this function with a callback, so it should not log anything
     const is_running_without_client = cb_on_server_start.toString().replace(/\s+/g, '') === '()=>{}'
@@ -459,7 +472,7 @@ function server(cb_on_server_start=()=>{}) {
           else legal = false
           break;
         default:
-          DEBUG('Unkown direction:', direction);
+          DEBUG('!! Unkown direction:', direction);
           break;
       }
 
@@ -613,7 +626,7 @@ function server(cb_on_server_start=()=>{}) {
           killer: killer?.toString(), 
           victim: victim.toString()
         })
-        DEBUG(`${killer instanceof Player ? 'Player ' + killer : killer} killed Player ${victim}`)
+        DEBUG(`>> ${killer instanceof Player ? 'Player ' + killer : killer} killed Player ${victim}`)
       }
     }
   }
@@ -642,7 +655,7 @@ function server(cb_on_server_start=()=>{}) {
     socket.on('data', (data) => {
       data.split(DELIMITER).slice(0, -1).forEach(task => {
         const message = JSON.parse(task)
-        // DEBUG(`Got message from player ${socket.player}:`, message);
+        DEBUG(`> Got message from player ${socket.player}:`, message);
 
         switch (message.type) {
           case 'join':
@@ -650,27 +663,27 @@ function server(cb_on_server_start=()=>{}) {
             game.join(socket.player)            
             //send the full map to the player
             socket.write(JSON.stringify({type: 'map', data: game.string_map(), player: socket.player}) + DELIMITER)
-            DEBUG(`Player ${socket.player} joined`);
+            DEBUG(`>> Player ${socket.player} joined`);
             break;
           case 'move':
             game.move(socket.player, message.data.action, message.data.direction)
             break;
           default:
-            DEBUG('unknown message type:', message);
+            DEBUG('!! unknown message type:', message);
             break;
         }
       })
     })
     //handle the disconnection of the client
     socket.on('close', () => {
-      DEBUG(`Player ${socket.player} disconnected.`)
+      DEBUG(`>> Player ${socket.player} disconnected.`)
       game.leave(socket.player)
       game.off('happening', handle_new_changes)
       delete socket.player
     })
     //handle errors
     socket.on('error', (error) => {
-      DEBUG('Player disconnected because: ', error.code);
+      DEBUG('>> Player disconnected because: ', error.code);
     })
     //handle new changes from the game
     //define logic to send the changes to the player
@@ -681,13 +694,13 @@ function server(cb_on_server_start=()=>{}) {
       const player_changes = {};
       for (const key in socket.player) {
         if (socket.player[key] !== socket.prevPlayer[key]) {
-          changes[key] = socket.player[key];
+          player_changes[key] = socket.player[key];
         }
       }
       socket.prevPlayer = { ...socket.player }
-
       //send the happening to the player as well as any changes
       const obj = { ...changes, player: player_changes}
+      DEBUG(`Sending to player ${socket.player}:`, obj)
       socket.write(JSON.stringify(obj) + DELIMITER)
     }
     //register the playersocket to the game's happening event
@@ -704,9 +717,10 @@ function server(cb_on_server_start=()=>{}) {
   });
   //start the server
   server.listen(DEFAULT_GAME_SERVER_PORT, DEFAULT_GAME_SERVER_ADDRESS, () => {
-    DEBUG(`Game server started on:
+    DEBUG(`>> Game server started on:
       \r\taddress: ${DEFAULT_GAME_SERVER_ADDRESS}
       \r\tport: ${DEFAULT_GAME_SERVER_PORT}`);
+      
     cb_on_server_start()
   })
   //#endregion
@@ -722,7 +736,7 @@ function server(cb_on_server_start=()=>{}) {
         multicast_server.send('i am here', client_info.port, client_info.address)
         break;
       default:
-        DEBUG('unknown message:', msg.toString());
+        DEBUG('!! unknown message:', msg.toString());
         break;
     }
   });
@@ -735,7 +749,7 @@ function server(cb_on_server_start=()=>{}) {
 
   //return a function to stop the server
   return () => {
-    DEBUG('stopping server...')
+    DEBUG('>> stopping server...')
     clients.forEach(client => client.end())
     server.close()
     multicast_server.close()
@@ -787,27 +801,34 @@ function client() {
           //if the client cannot connect to the server
           this.client.socket.on('timeout', () => {
             //close the client
-            this.client.close() 
-            //go back to the play_online menu with an error message
-            const options = this.current_options
-            const index = this.current_index
-            options[index].message = ''
-            options[index].error = 'Connection failed'
-            this.show()
+            this.client.close({code: 'timeout'}) 
           })
 
           //handle errors
           this.client.socket.on('error', (error) => {
-            //when timing out, an error event is fired, idk why
-            //so do nothing, the player doesn't need to know :)
+            switch (error.code) {
+              //if the server closes unexpectedly
+              case 'ECONNRESET':
+                this.menu('server_close')
+                break;
+              //when the server cannot be reached
+              case 'timeout':
+                //go back to the play_online menu with an error message
+                const options = this.current_options
+                const index = this.current_index
+                options[index].message = ''
+                options[index].error = 'Connection failed'
+                this.show()
+                break;
+              default:
+                //not giving a reason on client.close(), means it is intentional
+                break;
+            }
           })
 
           //when the socket closes
-          this.client.socket.on('close', (intentional=false) => {
-            //intentionally closing the client should do nothing
-            if (intentional) return
-            //in most cases, the server simply closed
-            this.menu('server_close')
+          this.client.socket.on('close', () => {
+            //please look at socket.on('error')
           })
 
           //when the socket successfully connects
@@ -942,10 +963,10 @@ function client() {
 
           });
         },
-        close: () => {
+        close: (reason) => {
           if (this.client.socket) {
             //this true will not trigger a 'server closed'
-            this.client.socket.destroy(true)
+            this.client.socket.destroy(reason)
             this.client.socket = null
           }
         },
@@ -979,11 +1000,6 @@ function client() {
         'd': '\x1b[38;5;196m~',
         'f': '\x1b[38;5;196m0',
       };
-      this.rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        prompt: '',
-      });
     }  
     //#region menu options
     async menu(type) {
@@ -1454,4 +1470,11 @@ function client() {
   display.intro(`${TITLE}\nMade by ArcadeFortune\n`, 'main')
 }
 
-client()
+const temp = 2121212121212
+if (temp % 2 === 0) {
+  //even for normal start
+  client()
+} else {
+  //uneven for server only
+  server()
+}
