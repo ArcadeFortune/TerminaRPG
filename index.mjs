@@ -1,6 +1,7 @@
 await import ('node:process');
 const os = await import('node:os')
 const net = await import('node:net')
+const http = await import('node:http')
 const dgram = await import('node:dgram');
 const readline = await import('node:readline');
 const { EventEmitter } = await import('node:events');
@@ -770,6 +771,18 @@ function server(cb_on_server_start=()=>{}) {
   //start the discovery service
   multicast_server.listen()
   //#endregion
+  
+  //smol http server
+  const httpServer = http.createServer((req, res) => {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/plain');
+    res.end('Hello, World!\n');
+  });
+
+  const httpPort = process.env.PORT || 3000;
+  httpServer.listen(httpPort, () => {
+    console.log(`HTTP server running at http://localhost:${httpPort}/`);
+  });
 
   console.clear()
 
@@ -834,18 +847,24 @@ function client() {
 
           //handle errors
           this.client.socket.on('error', (error) => {
+            const options = this.current_options
+            const index = this.current_index
+            options[index].message = ''
+            options[index].error = 'Connection failed'
+
             switch (error.code) {
               //if the server closes unexpectedly
               case 'ECONNRESET':
                 this.menu('server_close')
                 break;
+              //happens when trying to use 127.0.0.1 to connect locally
+              case 'ECONNREFUSED':
+                this.show()
+              //should never occur but just in case
+              case 'ENOTFOUND':
+                this.show()
               //when the server cannot be reached
               case 'timeout':
-                //go back to the play_online menu with an error message
-                const options = this.current_options
-                const index = this.current_index
-                options[index].message = ''
-                options[index].error = 'Connection failed'
                 this.show()
                 break;
               default:
@@ -1079,6 +1098,7 @@ function client() {
           this.menu_title = '|| Play with friends ||'
           this.current_options = [
             {id: 'play_remote', name: 'Join game via IP', type: 'select', input: true, placeholder: 'XXX.XXX.X.X'},
+            {id: 'port', name: 'Change port', type: 'input', input: true, value: DEFAULT_GAME_SERVER_PORT.toString()},
             {id: 'main', name: 'Return to menu'},
           ]
   
@@ -1152,19 +1172,20 @@ function client() {
           break;
         case 'play_remote':
           //get the values from the options
-          const address_to_connect = options[selected_option].value
+          const address_to_connect = options[selected_option].value.trim()
           //check for legit host
-          if (net.isIP(address_to_connect.trim()) < 1) {
-            options[selected_option].error = 'Impossible host address' + selected_option
-            this.show()
-            break;
-          }
+          // if (net.isIP(address_to_connect) < 1) {
+          //   options[selected_option].error = 'Impossible host address'
+          //   this.show()
+          //   break;
+          // }
           // notify that it is connecting
           options[selected_option].message = 'Connecting...'
           this.show()
   
           //start game but with a remote server
           this.game_server_address = address_to_connect
+          this.game_server_port = options[selected_option+1].value
           this.client.connect()
           break    
         case 'play_again_remote':
