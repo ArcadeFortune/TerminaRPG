@@ -389,6 +389,9 @@ function server(cb_on_server_start=()=>{}) {
           setTimeout(resolve, INVINCIBILITY_FRAMES)
         })
       }
+
+      //if the entity is dead, do nothing
+      if (entity.health <= 0) return;
       
       const i = entity.position.y
       const j = entity.position.x
@@ -1470,11 +1473,9 @@ function client() {
   display.intro(`${TITLE}\nMade by ArcadeFortune\n`, 'main')
 }
 
-const temp = 2121212121212
-if (temp % 2 === 0) {
-  //even for normal start
-  client()
-} else {
-  //uneven for server only
+
+if (process.argv.length >= 3) {
   server()
+} else {
+  client()
 }
