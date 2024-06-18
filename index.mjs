@@ -592,7 +592,6 @@ function server(cb_on_server_start=()=>{}) {
 
         switch (message.type) {
           case 'join':
-            console.log(socket.player);
             //register the player only if they are off the map
             if (!socket.player.position.x && !socket.player.position.y) game.join(socket.player)
             //send the full map to the player
@@ -620,7 +619,6 @@ function server(cb_on_server_start=()=>{}) {
     //handle the disconnection of the client
     socket.on('close', () => {
       DEBUG(`>> Player ${socket.player} disconnected.`)
-      console.log('socket.player: ', socket.player);
       game.leave(socket.player)
       game.off('happening', handle_new_changes)
       delete socket.player
@@ -730,7 +728,6 @@ function client() {
   const DEFAULT_SCREEN_HEIGHT = 20
   const DEFAULT_CHAT_HEIGHT = process.stdout.rows - DEFAULT_SCREEN_HEIGHT - 3
   // const DEFAULT_SCREEN_HEIGHT = process.stdout.rows - DEFAULT_CHAT_HEIGHT
-  const TILE_SIZE = 2;
 
   class Display {
     constructor() {
@@ -738,6 +735,9 @@ function client() {
       this.screen_width = DEFAULT_SCREEN_WIDTH
       this.screen_height = DEFAULT_SCREEN_HEIGHT
       this.chat_height = DEFAULT_CHAT_HEIGHT
+      this.tile_size = 2
+      this.map_height = 1
+      this.map_width = 1
       this.scoreboard = []
       this.chat_log = []
       this.writing_message = ''
@@ -865,21 +865,7 @@ function client() {
                 default: 
                   DEBUG('Unknown message received from server: ', message);
               }
-
-              //move the cursor below the map
-              readline.cursorTo(process.stdout, 0, this.screen_height)
-              // //this will move the curosr to the bottom right of the terminal
-              // readline.cursorTo(process.stdout, this.rl.output.columns, this.rl.output.rows)
-              let color = this.COLORS.reset
-
-              //if the player is damaged, render the hearts red
-              if (this.player.damaged) color = '\x1b[38;5;196m'
-              console.log(color + this.render_health(this.player.health) + this.COLORS.reset);
-
-              this.chat_log.slice(-this.chat_height).forEach(message => console.log(message + '                        '))
-              //temporarly remove the scoreboard, it messes with the chat size
-              // console.table(this.scoreboard);
-              // this.draw_border()
+              if (this.client.socket) this.render_chat()
             })
           })
         },
@@ -896,6 +882,7 @@ function client() {
           this.state = 'ingame'
           this.client.send({}, 'join')
           this.clear_chat()
+          //#region ingame key bindings
           //give keyboard control to the player
           process.stdin.removeAllListeners('keypress')
           process.stdin.on('keypress', (str, key) => {
@@ -909,7 +896,6 @@ function client() {
               readline.clearLine(process.stdout, 1);
             }
             else {
-              //#region ingame key bindings
               switch (key.name) {
                 case 'w':
                   this.client.send({direction: 'N', action: 'move'}, 'move')
@@ -935,9 +921,6 @@ function client() {
                 case 'right':
                   this.client.send({direction: 'E', action: 'attack'}, 'move')
                   break;
-                case 'e':
-                  display.log_ip()
-                  break;
                 case 'c':
                   this.client.send({}, 'map')
                   break;
@@ -961,12 +944,17 @@ function client() {
               }
             }
           });
+          //repaint the screen when the screen resizes
+          process.stdout.on('resize', this.client.refresh_map)
+        },
+        refresh_map: () => {
+          if (this.client.socket) this.client.send({}, 'map')
         },
         close: (reason) => {
           if (this.client.socket) {
-            //this true will not trigger a 'server closed'
             this.client.socket.destroy(reason)
             this.client.socket = null
+            process.stdout.off('resize', this.client.refresh_map)
           }
         },
       }
@@ -1206,30 +1194,34 @@ function client() {
           if (index === selected_index) {
             //highlight selected
             console.log(this.COLORS.pure_white + '> ' + option.name + this.COLORS.reset); 
+
+            //more stuff below the selected option
+            //input field
+            if (option.input) {
+              //margin
+              process.stdout.write('  ') 
+              console.log(option.value || this.COLORS.placeholder + (option.placeholder || '') + this.COLORS.reset);
+            }
+            //slider
+            if (option.type === 'slider') {
+              //margin
+              process.stdout.write('  ') 
+              console.log(`${this.COLORS.pure_white}- ${this[options[selected_index].id]} +${this.COLORS.reset}`);
+            }
+            //if there is a message
+            if (option.message) {
+              process.stdout.write('  ') 
+              console.log(this.COLORS.message + option.message + this.COLORS.reset);
+            }
+            //if there is an error
+            if (option.error) {
+              process.stdout.write('  ') 
+              console.log(this.COLORS.error + option.error + this.COLORS.reset);
+            }
+
           } else {
             //print the other option
             console.log(' ' + option.name);
-          }
-  
-          //print stuff beneath an option
-          if (index === selected_index && option.input) {
-            //margin
-            process.stdout.write('  ') 
-            console.log(option.value || this.COLORS.placeholder + (option.placeholder || '') + this.COLORS.reset);
-          }
-          if (index === selected_index && option.type === 'slider') {
-            //less margin for the symbols
-            process.stdout.write(' ') 
-            console.log(`${this.COLORS.pure_white}- ${this[options[selected_index].id]} +${this.COLORS.reset}`);
-          }
-          if (index === selected_index && option.message) {
-            process.stdout.write('  ') 
-            console.log(this.COLORS.message + option.message + this.COLORS.reset);
-          }
-          //should not show errors and messages at the same time
-          else if (index === selected_index && option.error) {
-            process.stdout.write('  ') 
-            console.log(this.COLORS.error + option.error + this.COLORS.reset);
           }
         }
       })
@@ -1398,46 +1390,70 @@ function client() {
     }
     /**
      * prints the the processed map from raw data
+     * also saves the map data locally
      * @param {Array} map 2D array of the map
      * @returns
      */
     render(map) {
+      //before rendering, determine the tile size
+      this.tile_size = this.reevaluate_tile_size(map[0].length, map.length)
+      if (this.tile_size < 1) {
+        this.client.close()
+        this.current_options[this.current_index].message = ''
+        this.current_options[this.current_index].error = 'Screen too small'
+        this.show()
+        return
+      }
+
       console.clear();
       //data is a 2 dimentional array
       for (let i = 0; i < map.length; i++) {
         let row = ''
         for (let j = 0; j < map[i].length; j++) {
-          row += this.process_char(map[i][j]).repeat(TILE_SIZE + 1)
+          row += this.process_char(map[i][j]).repeat(this.tile_size + 1)
         }
-        for (let k = 0; k < TILE_SIZE; k++) {
+        for (let k = 0; k < this.tile_size; k++) {
           process.stdout.write(row + '\r\n')
         }
       }
       console.log(this.COLORS.reset);
+
+      //save the map data locally
+      this.map_height = map.length
+      this.map_width = map[0].length
     }
     /**
      * changes one or more pixels on the screen depending on the data
+     * also updates the local map data
      * @param {Array} data Ojbect array containing an `x` and `y` coordinate and `what` to change
      * @returns 
      */
     update(data) {
-      //update should also handle log events but it cant right now
       if (!data) return console.error('No data to update')
       //for performance, move the cursor to the pixels to change and change them manually.
       data.forEach((change) => {
-        for (let k = 0; k < TILE_SIZE; k++) {
+        for (let k = 0; k < this.tile_size; k++) {
           //move the cursor to the pixel location
           //k is the amount of rows
           readline.cursorTo(
             process.stdout, 
-            change.x * (TILE_SIZE + 1),
-            change.y * TILE_SIZE + k
+            change.x * (this.tile_size + 1),
+            change.y * this.tile_size + k
           );
           
-          process.stdout.write(this.process_char(change.what).repeat(TILE_SIZE + 1))
+          process.stdout.write(this.process_char(change.what).repeat(this.tile_size + 1))
         }
       })
       process.stdout.write(this.COLORS.reset)
+    }
+    
+    /**
+     * reevaluates the tile size to fit the screen
+     * @returns {Number} the new tile size
+     */
+    reevaluate_tile_size(map_width, map_height) {
+      //lots of maths
+      return Math.floor(Math.min(process.stdout.columns / map_width - 1, process.stdout.rows / map_height))
     }
     /**
      * draws border around the screen
@@ -1468,6 +1484,22 @@ function client() {
       
       //reset the cursor to the top left
       process.stdout.write('\x1b[1;1H')
+    }
+    render_chat() {
+      //move the cursor below the map
+      readline.cursorTo(process.stdout, 0, this.map_height * (this.tile_size))
+      // //this will move the curosr to the bottom right of the terminal
+      // readline.cursorTo(process.stdout, this.rl.output.columns, this.rl.output.rows)
+      let color = this.COLORS.reset
+
+      //if the player is damaged, render the hearts red
+      if (this.player.damaged) color = '\x1b[38;5;196m'
+      console.log(color + this.render_health(this.player.health) + this.COLORS.reset);
+
+      this.chat_log.slice(-this.chat_height).forEach(message => console.log(message + '                        '))
+      //temporarly remove the scoreboard, it messes with the chat size
+      // console.table(this.scoreboard);
+      // this.draw_border()
     }
   }
   
