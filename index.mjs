@@ -37,8 +37,8 @@ const rl = readline.createInterface({
  * @returns a function to stop the server
  */
 function server(cb_on_server_start=()=>{}) {
-  const MAP_WIDTH = 30
-  const MAP_HEIGHT = 10
+  const MAP_WIDTH = 5
+  const MAP_HEIGHT = 3
   const PLAYER_RENDER_DISTANCE = 7
     
   //allow the server to be stopped by user input
@@ -212,7 +212,7 @@ function server(cb_on_server_start=()=>{}) {
      * @param {Player} player
      * @returns a string representation of the map in an array
      */
-    string_map(player) {
+    string_map() {
       const map = []
       const start_x = 0
       const start_y = 0
