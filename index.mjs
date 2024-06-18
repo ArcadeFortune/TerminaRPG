@@ -1,5 +1,4 @@
 await import ('node:process');
-const os = await import('node:os')
 const net = await import('node:net')
 const http = await import('node:http')
 const dgram = await import('node:dgram');
@@ -16,37 +15,7 @@ process.on('exit', () => {
   console.log('leaving...')
 })
 
-//get ip address to bind local server to so others can join it in LAN
-function get_ip_address(family='IPv4') {
-  let ip_address = '127.0.0.1'
-  let found = false
-
-  try {
-    const network_interfaces = os.networkInterfaces();
-
-    const interface_arr = Object.keys(network_interfaces)
-    for (let i = 0; i < interface_arr.length; i++) {
-      const address_arr = network_interfaces[interface_arr[i]]
-      for (let j = 0; j < address_arr.length; j++) {
-        if (address_arr[j].family === family) {
-          ip_address = address_arr[j].address
-          found = true
-        }
-        if (found) break
-      }
-      if (found) break
-    }
-
-  }
-  catch (error) {
-    //https://github.com/nodejs/help/issues/4058
-    console.log('You must be playing on an android phone :)')
-  }
-  return ip_address
-}
-
 //#region global variables
-const DEFAULT_GAME_SERVER_ADDRESS = get_ip_address()
 const DEFAULT_GAME_SERVER_PORT = 49152
 const MULTICAST_ADDRESS = '224.69.69.69'
 const INVINCIBILITY_FRAMES = 300
@@ -58,70 +27,6 @@ const rl = readline.createInterface({
   output: process.stdout,
   prompt: '',
 });
-
-/**
- * Multicast class
- * Using this class you can send and receive messages to and from a multicast address
- * @param {String} type should be 'server' or 'client'
- * @extends EventEmitter
- * @fires `message` containing two arguments, the message and the rinfo
- */
-class Multicast extends EventEmitter {
-  constructor(type='server') {
-    super()
-    this.type = type
-    this.server = dgram.createSocket('udp4');
-    this.server.on('error', (err) => {
-      // DEBUG(`server error:\n${err}`);
-      this.server.close();
-    });
-    this.server.on('message', (msg, rinfo) => {
-      // DEBUG(`${this.type} got: ${msg} from ${rinfo.address}:${rinfo.port}`);
-      this.emit('message', msg, rinfo)
-    })
-  }
-  listen(cb=()=>{}) {
-    let port = 0;
-    if (this.type === 'server') port = DEFAULT_GAME_SERVER_PORT
-    this.server.bind(port, undefined, () => {
-      this.server.setBroadcast(true);
-      this.server.setMulticastTTL(128);
-      this.server.addMembership(MULTICAST_ADDRESS);
-      // const address = this.server.address();
-      // DEBUG(`${this.type} listening ${address.address}:${address.port}`)
-      cb()
-    });
-  }
-  /**
-   * broadcast a message to everyone in the multicast group
-   * @param {String} message 
-   */
-  broadcast(message) {
-    //broadcast message to all servers
-    // DEBUG(`sending ${message} to all servers at ${MULTICAST_ADDRESS}:${DEFAULT_GAME_SERVER_PORT}`);
-    this.server.send(message, DEFAULT_GAME_SERVER_PORT, MULTICAST_ADDRESS);
-  }
-  /**
-   * send a message to a specific client
-   * @param {String} message 
-   * @param {Number} port of the receipient
-   * @param {String} address of the receipient
-   */
-  send(message, port, address) {
-    //send message to specific client
-    // DEBUG(`sending ${message} to client at ${address}:${port}`);
-    this.server.send(message, port, address);
-  }
-  close() {
-    try {
-      this.server.close();
-      //close() will be called multiple times
-      //because the display tries to close it every time the main menu opens
-    } catch (e) {
-      // DEBUG('error closing server', e)
-    }
-  }
-}
 
 //#region Server code
 /**
@@ -155,6 +60,12 @@ function server(cb_on_server_start=()=>{}) {
       this.is_entity = false
       this.damaged = false
       this.health = 0
+      //position is currently only used for players
+      //zombies, walls and ground do not have a position, because it is not needed
+      this.position = {
+        x: null,
+        y: null
+      }
     }
   }
 
@@ -171,8 +82,14 @@ function server(cb_on_server_start=()=>{}) {
       this.last_attack = Date.now()
     }  
     reset() {
+      //reset the player's stats but keep the kills
       this.strength = this.default_strength
       this.health = this.default_health
+      this.damaged = false
+      this.position = {
+        x: null,
+        y: null
+      }
     }
   }
 
@@ -183,10 +100,6 @@ function server(cb_on_server_start=()=>{}) {
       this.default_strength = 1
       this.health = this.default_health
       this.strength = this.default_strength
-      this.position = {
-        x: null,
-        y: null
-      }
       this.number = 0
     }
     toString() {
@@ -376,7 +289,7 @@ function server(cb_on_server_start=()=>{}) {
     leave(player) {
       this.kill(null, player)
       this.scoreboard.remove(player.toString())
-      //update the scoreboard, this.kill's update does not include the removed player
+      //update the scoreboard with without the player
       this.emit('happening', { 
         type: 'scoreboard', 
         data: this.scoreboard.toString() 
@@ -594,6 +507,7 @@ function server(cb_on_server_start=()=>{}) {
       const { x, y } = victim.position
       //if the victim is not there, do nothing
       if (this.map[y][x] !== victim) return
+
       //update the death of the victim
       this.emit('happening', { 
         type: 'changes', 
@@ -601,14 +515,13 @@ function server(cb_on_server_start=()=>{}) {
           { x: x, y: y, what: 'f'+victim.toString() }
         ]
       })
+
       //replace the victim with a ground cell, how cruel
       this.map[y][x] = new Ground()
       
       //after the INVINCIBILITY_FRAMES
       setTimeout(() => {
-        //is vicitim.damaged neccessary?
-        victim.damaged = false
-        //also update the map
+        //update the dissapearance of the victim
         this.emit('happening', { 
           type: 'changes', 
           data: [
@@ -679,8 +592,9 @@ function server(cb_on_server_start=()=>{}) {
 
         switch (message.type) {
           case 'join':
+            console.log(socket.player);
             //register the player only if they are off the map
-            if (!socket.player.position.x && !socket.player.position.y) game.join(socket.player)            
+            if (!socket.player.position.x && !socket.player.position.y) game.join(socket.player)
             //send the full map to the player
             socket.write(JSON.stringify({type: 'map', data: game.string_map(socket.player), player: socket.player}) + DELIMITER)
             DEBUG(`>> Player ${socket.player} joined`);
@@ -745,11 +659,14 @@ function server(cb_on_server_start=()=>{}) {
       console.error(error)
     }
   });
+  
   //start the server
-  server.listen(DEFAULT_GAME_SERVER_PORT, DEFAULT_GAME_SERVER_ADDRESS, () => {
+  server.listen(DEFAULT_GAME_SERVER_PORT, undefined, () => {
+    const address = server.address();
+    console.log(address);
     DEBUG(`>> Game server started on:
-      \r\taddress: ${DEFAULT_GAME_SERVER_ADDRESS}
-      \r\tport: ${DEFAULT_GAME_SERVER_PORT}`);
+      \r\taddress: ${address.address}
+      \r\tport: ${address.port}`);
       
     cb_on_server_start()
   })
@@ -757,36 +674,38 @@ function server(cb_on_server_start=()=>{}) {
 
   //#region discovery service
   //initialize the discovery service for the game
-  const multicast_server = new Multicast('server')
+  const multicast_server = dgram.createSocket('udp4');
+
+  multicast_server.on('error', (err) => {
+    DEBUG(`server error:\n${err}`);
+    multicast_server.close();
+  });
 
   //when a player is looking for a game
   multicast_server.on('message', (msg, client_info) => {
+    DEBUG(`Multicast server got: ${msg} from ${client_info.address}:${client_info.port}`);
     switch (msg.toString()) {
       case 'LFG':
-        multicast_server.send('i am here', client_info.port, client_info.address)
+        const message = 'i am here'
+        DEBUG(`sending '${message}' to client at ${client_info.address}:${client_info.port}`);
+        multicast_server.send(message, client_info.port, client_info.address)
         break;
       default:
         DEBUG('!! unknown message:', msg.toString());
         break;
     }
-  });
+  })
   
   //start the discovery service
-  multicast_server.listen()
+  multicast_server.bind(DEFAULT_GAME_SERVER_PORT, undefined, () => {
+    multicast_server.setBroadcast(true);
+    multicast_server.setMulticastTTL(128);
+    multicast_server.addMembership(MULTICAST_ADDRESS);
+    const address = multicast_server.address();
+    DEBUG(`>> Multicast server started on:\n\taddress: ${address.address}\n\tport: ${address.port}`)
+  });
   //#endregion
   
-  //smol http server
-  const httpServer = http.createServer((req, res) => {
-    res.statusCode = 200;
-    res.setHeader('Content-Type', 'text/plain');
-    res.end('Hello, World!\n');
-  });
-
-  const httpPort = process.env.PORT || 3000;
-  httpServer.listen(httpPort, () => {
-    console.log(`HTTP server running at http://localhost:${httpPort}/`);
-  });
-
   console.clear()
 
   //return a function to stop the server
@@ -794,7 +713,12 @@ function server(cb_on_server_start=()=>{}) {
     DEBUG('>> stopping server...')
     clients.forEach(client => client.end())
     server.close()
-    multicast_server.close()
+    //the display tries to close servers every time the main menu opens
+    try {
+      multicast_server.close();      
+    } catch (e) {
+      //to prevent the multicast server from bugging out, do nothing
+    }
   }
 }
 
@@ -823,7 +747,6 @@ function client() {
       this.update_player = (new_stats) => Object.assign(this.player, new_stats)
       //menu variables
       this.game_server_port = DEFAULT_GAME_SERVER_PORT
-      this.game_server_address = DEFAULT_GAME_SERVER_ADDRESS
       this.menu_title = ''
       this.state = ''
       this.current_options = []
@@ -832,12 +755,12 @@ function client() {
       this.stop_server = () => {}
       this.client = {
         socket: null,
-        connect: () => {
+        connect: (address=undefined, port=DEFAULT_GAME_SERVER_PORT) => {
           //casually have the entire client code in here
           //#region client logic
           this.client.socket = net.createConnection({
-            port: this.game_server_port,
-            host: this.game_server_address,
+            port: port,
+            host: address,
             timeout: 500
           })
           this.client.socket.setEncoding('utf-8')
@@ -980,11 +903,13 @@ function client() {
               process.exit(0);
             }
             else if (this.state === 'inchat') {
-              rl.write(key.sequence.replace(/\x1B\[A|\x1B\[B/g, ''))
+              //filter out the arrow keys
+              const filtered = key.sequence.replace(/\x1B\[A|\x1B\[B/g, '')
+              rl.write(filtered)
               readline.clearLine(process.stdout, 1);
             }
             else {
-              //#region key bindings
+              //#region ingame key bindings
               switch (key.name) {
                 case 'w':
                   this.client.send({direction: 'N', action: 'move'}, 'move')
@@ -1100,22 +1025,36 @@ function client() {
         case 'play_online':
           this.menu_title = '|| Play with friends ||'
           this.current_options = [
-            {id: 'play_remote', name: 'Join game via IP', type: 'select', input: true, placeholder: 'XXX.XXX.X.X'},
+            {id: 'play_remote', name: 'Join game via IP address', type: 'select', input: true, placeholder: 'XXX.XXX.X.X'},
             {id: 'port', name: 'Change port', type: 'input', input: true, value: DEFAULT_GAME_SERVER_PORT.toString()},
             {id: 'main', name: 'Return to menu'},
           ]
   
+          //#region player multicast
           //start to look for available servers
-          this.player_multicast = new Multicast('client')
-          this.player_multicast.listen(() => {
-            this.player_multicast.broadcast('LFG')
-          })
-          this.player_multicast.on('message', (msg, rinfo) => {
+          this.player_multicast = dgram.createSocket('udp4');
+          
+          this.player_multicast.on('error', (err) => {
+            this.player_multicast.close();
+          });
+
+          //start the multicast service
+          this.player_multicast.bind(0, undefined, () => {
+            this.player_multicast.setBroadcast(true);
+            this.player_multicast.setMulticastTTL(128);
+            this.player_multicast.addMembership(MULTICAST_ADDRESS);
+
+            //send a message to the multicast server
+            const message = 'LFG'
+            this.player_multicast.send(message, DEFAULT_GAME_SERVER_PORT, MULTICAST_ADDRESS);
+          });
+
+          this.player_multicast.on('message', (msg, server_info) => {
             //if a server is found, display it as an option
             let server_found = { 
               id: 'play_remote', 
-              name: `Join server at ${rinfo.address}`,
-              value: rinfo.address,
+              name: `Join server at ${server_info.address}`,
+              value: server_info.address,
             }
             this.current_options = [server_found, ...this.current_options]
             this.current_index = 0 
@@ -1165,32 +1104,35 @@ function client() {
         //#region menu selected
         //cases for when a button is clicked, that is not another menu
         case 'play':
-          //reset the server address
-          this.game_server_address = DEFAULT_GAME_SERVER_ADDRESS
-          
+          //if the server code is present
+          //this way the the cliend and server code can be extracted without errors
           if (typeof server === 'function') {
-            //start the server if it exists
+            //start the server 
             this.stop_server = server(this.client.connect);
+          } 
+          //if the server code is not present
+          else {
+            //connect to the server without starting server, because the code is not present
+            this.client.connect()
           }
           break;
         case 'play_remote':
-          //get the values from the options
-          const address_to_connect = options[selected_option].value.trim()
+          const remote_address = options[selected_option].value.trim()
+          const remote_port = parseInt(options[options.length-2].value)
+
           //check for legit host
-          // if (net.isIP(address_to_connect) < 1) {
-          //   options[selected_option].error = 'Impossible host address'
-          //   this.show()
-          //   break;
-          // }
+          if (net.isIP(remote_address) < 1) {
+            options[selected_option].error = 'Impossible host address'
+            this.show()
+            break;
+          }
+
           // notify that it is connecting
           options[selected_option].message = 'Connecting...'
           this.show()
   
-          //start game but with a remote server
-          this.game_server_address = address_to_connect
-          this.game_server_port = parseInt(options[options.length-2].value)
-          this.client.connect()
-          break    
+          this.client.connect(remote_address, remote_port)
+          break;
         case 'play_again_remote':
           this.client.join()
           break
@@ -1411,12 +1353,6 @@ function client() {
       }
       //when the intro finished without user input, treat it as skipped
       this.state = 'intro_skipped'
-    }
-    /**
-     * log the ip of the server
-     */
-    log_ip() {
-      console.log('Host: ', this.game_server_address)
     }
     /**
      * processes the input character
