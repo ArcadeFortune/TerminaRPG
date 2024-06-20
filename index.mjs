@@ -506,7 +506,7 @@ function server(cb_on_server_start=()=>{}) {
     kill(killer, victim) {
       const { x, y } = victim.position
       //if the victim is not there, do nothing
-      if (this.map[y][x] !== victim) return
+      if (!x || !y || this.map[y][x] !== victim) return 
 
       //update the death of the victim
       this.emit('happening', { 
@@ -619,8 +619,8 @@ function server(cb_on_server_start=()=>{}) {
     //handle the disconnection of the client
     socket.on('close', () => {
       DEBUG(`>> Player ${socket.player} disconnected.`)
-      game.leave(socket.player)
       game.off('happening', handle_new_changes)
+      game.leave(socket.player)
       delete socket.player
     })
     //handle errors
@@ -661,7 +661,6 @@ function server(cb_on_server_start=()=>{}) {
   //start the server
   server.listen(DEFAULT_GAME_SERVER_PORT, undefined, () => {
     const address = server.address();
-    console.log(address);
     DEBUG(`>> Game server started on:
       \r\taddress: ${address.address}
       \r\tport: ${address.port}`);
@@ -724,10 +723,9 @@ function server(cb_on_server_start=()=>{}) {
 // Client code //
 function client() {
   const TITLE = `Welcome to TerminaRPG\n           ▔▔▔▔▔▔▔▔▔▔`
+  const DEFAULT_CHAT_HEIGHT = 5
   const DEFAULT_SCREEN_WIDTH = process.stdout.columns
-  const DEFAULT_SCREEN_HEIGHT = 20
-  const DEFAULT_CHAT_HEIGHT = process.stdout.rows - DEFAULT_SCREEN_HEIGHT - 3
-  // const DEFAULT_SCREEN_HEIGHT = process.stdout.rows - DEFAULT_CHAT_HEIGHT
+  const DEFAULT_SCREEN_HEIGHT = process.stdout.rows - DEFAULT_CHAT_HEIGHT
 
   class Display {
     constructor() {
@@ -735,6 +733,7 @@ function client() {
       this.screen_width = DEFAULT_SCREEN_WIDTH
       this.screen_height = DEFAULT_SCREEN_HEIGHT
       this.chat_height = DEFAULT_CHAT_HEIGHT
+      this.default_screen_size = true
       this.tile_size = 2
       this.map_height = 1
       this.map_width = 1
@@ -748,16 +747,22 @@ function client() {
       //menu variables
       this.game_server_port = DEFAULT_GAME_SERVER_PORT
       this.menu_title = ''
+      /**
+       * string representing the current state of TerminaRPG:
+       * @ingame when the player is playing
+       * @inchat when the player is writing a message
+       * @intro_skipped when the intro is skipped
+       */
       this.state = ''
       this.current_options = []
       this.current_index = 0
       this.op_animation = null
       this.stop_server = () => {}
       this.client = {
+        //casually have the entire client-socket code in here
+        //#region client-socket logic
         socket: null,
         connect: (address=undefined, port=DEFAULT_GAME_SERVER_PORT) => {
-          //casually have the entire client code in here
-          //#region client logic
           this.client.socket = net.createConnection({
             port: port,
             host: address,
@@ -870,8 +875,9 @@ function client() {
           })
         },
         send: (message, type) => {
-          if (!message || !type) return console.error('insufficent parameters')
-      
+          if (!message || !type) return console.error('insufficent parameters');
+          //do not send messages when the player not ingame
+          if (this.state !== 'ingame') return;
           const full_message = {}
           full_message['type'] = type
           full_message['data'] = { ...message }
@@ -948,7 +954,9 @@ function client() {
           process.stdout.on('resize', this.client.refresh_map)
         },
         refresh_map: () => {
+          //it should only refresh the map the user is currently using the default settings
           if (this.client.socket) this.client.send({}, 'map')
+          // if (this.client.socket && this.default_screen_size) this.client.send({}, 'map')
         },
         close: (reason) => {
           if (this.client.socket) {
@@ -1128,6 +1136,7 @@ function client() {
           this.screen_width = DEFAULT_SCREEN_WIDTH
           this.screen_height = DEFAULT_SCREEN_HEIGHT
           this.chat_height = DEFAULT_CHAT_HEIGHT
+          this.default_screen_size = true
           this.show(0, true)
           break;
         case 'quit':
@@ -1135,7 +1144,6 @@ function client() {
           console.log('bye')
           process.exit(0)
         case 'death':
-          this.state = 'death_screen'
           this.intro('You died.', 'death_screen')
           break;
       }
@@ -1228,8 +1236,7 @@ function client() {
   
       //clean up the animation
       if (options[selected_index].id !== 'quit') clearInterval(this.op_animation)
-      
-  
+        
       process.stdin.removeAllListeners('keypress')
       process.stdin.on('keypress', (str, key) => {
         if (key.ctrl && key.name === 'c') {
@@ -1254,9 +1261,18 @@ function client() {
         else if (key.name === 'left') {
           //if it is a slider
           if (options[selected_index].type === 'slider') {
+            //if the user tries to change any of the screen sizes
+            if (
+              options[selected_index].id === 'screen_width' || 
+              options[selected_index].id === 'screen_height' || 
+              options[selected_index].id === 'chat_height'
+            ) 
+            { 
+              //then it is no longer default
+              this.default_screen_size = false
+            }
+
             // const new_value = Math.max(options[selected_index].value - 1, 1) //cannot go below 1
-            // options[selected_index].value = new_value
-            // this[options[selected_index].id] = new_value
             this[options[selected_index].id] = this[options[selected_index].id] - 1
             this.show(selected_index, screen_borders)
           }
@@ -1264,6 +1280,16 @@ function client() {
         else if (key.name === 'right') {
           //if it is a slider
           if (options[selected_index].type === 'slider') {
+            //if the user tries to change any of the screen sizes
+            if (
+              options[selected_index].id === 'screen_width' || 
+              options[selected_index].id === 'screen_height' || 
+              options[selected_index].id === 'chat_height'
+            ) 
+            { 
+              //then it is no longer default
+              this.default_screen_size = false
+            }
             // const new_value = options[selected_index].value + 1
             // options[selected_index].value = new_value
             this[options[selected_index].id] = this[options[selected_index].id] + 1
@@ -1448,19 +1474,32 @@ function client() {
     }
     
     /**
-     * reevaluates the tile size to fit the screen
+     * reevaluates the tile size to fit the screen.
+     * also if using the default screen size, updates the screen size to match the terminal window.
+     * this function is used everytime the terminal window resizes
      * @returns {Number} the new tile size
      */
     reevaluate_tile_size(map_width, map_height) {
       //lots of maths
-      return Math.floor(Math.min(process.stdout.columns / map_width - 1, process.stdout.rows / map_height))
+      //if the screen is using the default size      
+      if (this.default_screen_size) {
+        //automatically update the screen width to reflect the new terminal window size
+        this.screen_width = process.stdout.columns
+        this.screen_height = process.stdout.rows - this.chat_height
+      }
+      //but if the terminal window is smaller than the user defined screen size
+      else if (this.screen_width > process.stdout.columns || this.screen_height + this.chat_height > process.stdout.rows ) {
+        return 0
+      }
+      return Math.floor(Math.min(this.screen_width / map_width - 1, this.screen_height / map_height))
+      // return Math.floor(Math.min(process.stdout.columns / map_width - 1, process.stdout.rows / map_height))
     }
     /**
      * draws border around the screen
-     * depending on `this.screen_width` and `this.screen_height` and `this.chat_height`
+     * depending on `this.screen_width` and `this.screen_height` and `this.chat_height`.
+     * also this function is beyond broken, dont use it
      */
     draw_border() {
-      //function that draws the bottom and right border of the screen
       const width = this.screen_width
       const height = this.screen_height
       const chat_height = this.chat_height
