@@ -819,8 +819,8 @@ function client() {
 
           //when the socket receives data
           this.client.socket.on('data', (data) => {
-            //dont update while in intro
-            if (this.state === 'death_screen') return
+            //ignore everything when the player is not ingame
+            if (this.state !== 'ingame') return
 
             data.split(DELIMITER).slice(0, -1).forEach(task => {
               const message = JSON.parse(task)
@@ -860,7 +860,10 @@ function client() {
                   }
                   //if this client dies, go to the death screen
                   if (parseInt(message.victim) === parseInt(this.player.number)) {
-                    this.player.health = 0 //on death, the players health is resest, so we manually change it
+                    //on death, the players health is resest back to original, so we manually change it
+                    this.player.health = 0 
+                    //after death is just an empty string
+                    this.state = ''
                     setTimeout(() => this.menu('death'), INVINCIBILITY_FRAMES)
                   }
                   break;
