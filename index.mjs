@@ -1,10 +1,7 @@
 await import ('node:process');
 const net = await import('node:net')
-const http = await import('node:http')
-
 const repl = await import('node:repl'); 
 const dgram = await import('node:dgram');
-
 const readline = await import('node:readline');
 const { EventEmitter } = await import('node:events');
 
@@ -105,6 +102,7 @@ function server(cb_on_server_start=()=>{}) {
       this.health = this.default_health
       this.strength = this.default_strength
       this.number = 0
+      this.is_premium = true
     }
     toString() {
       return JSON.stringify(this.number)
@@ -612,7 +610,7 @@ function server(cb_on_server_start=()=>{}) {
             //remove the escape sequences from the message
             const clean_message = message.data.message.replace(/\x1B\[A|\x1B\[B/g, '')
             //send the message to all players
-            game.emit('happening', { type: 'chat', data: { message: clean_message, who: socket.player.toString() } })
+            game.emit('happening', { type: 'chat', data: { message: clean_message, who: socket.player.toString(), is_premium: socket.player.is_premium } })
             break;
           default:
             DEBUG('!! unknown message type:', message);
@@ -739,6 +737,17 @@ function client() {
   const DEFAULT_CHAT_HEIGHT = 5
   const DEFAULT_SCREEN_WIDTH = process.stdout.columns
   const DEFAULT_SCREEN_HEIGHT = process.stdout.rows - DEFAULT_CHAT_HEIGHT
+  
+  function hslToAnsi(h, s=100, l=50) {
+    l /= 100;
+    const a = s * Math.min(l, 1 - l) / 100;
+    const f = n => {
+      const k = (n + h / 30) % 12;
+      const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+      return Math.round(255 * color);
+    };
+    return `\x1b[38;2;${f(0)};${f(8)};${f(4)}m`;
+  }
 
   class Display {
     constructor() {
@@ -751,9 +760,26 @@ function client() {
       this.map_height = 1
       this.map_width = 1
       this.scoreboard = []
+      /**
+       * @type {Array<Function>}
+       * Array of functions that log messages to the console
+       */
       this.chat_log = []
+      this.premium_hue = 0
+      this.update_premium_hue = () => this.premium_hue = (this.premium_hue + 9) % 360
+      this.is_premium_running = false
       this.writing_message = ''
-      this.chat = (msg) => this.chat_log.push(msg)
+      this.chat = (msg, is_premium=false) => 
+        this.chat_log.push(
+          is_premium ? () => {
+            readline.clearLine(process.stdout, 1);
+            console.log(`${hslToAnsi(this.premium_hue)}${msg}`)
+          }
+          : () => {
+            readline.clearLine(process.stdout, 1);
+            console.log(this.COLORS.reset + msg)
+          }
+        ) 
       this.clear_chat = () => this.chat_log = []
       this.player = {}
       this.update_player = (new_stats) => Object.assign(this.player, new_stats)
@@ -881,7 +907,7 @@ function client() {
                   }
                   break;
                 case 'chat':
-                  this.chat(`Player ${message.data.who}: ${message.data.message}`)
+                  this.chat(`Player ${message.data.who}: ${message.data.message}`, message.data.is_premium)
                   break;
                 default: 
                   DEBUG('Unknown message received from server: ', message);
@@ -946,8 +972,12 @@ function client() {
                 case 'c':
                   this.client.send({}, 'map')
                   break;
+                case 'p':
+                  this.render_chat()
+                  break;
                 case 'return':
                   //let the user write something
+                  this.render_chat()
                   this.state = 'inchat'
                   //when he finished
                   rl.question('> ', (message) => {
@@ -955,6 +985,7 @@ function client() {
                     //clean up
                     readline.moveCursor(process.stdout, 0, -1);
                     readline.clearLine(process.stdout, 1);
+                    this.render_chat(true)
                     if (message.trim() === '') return
                     //send the message
                     this.client.send({message}, 'chat'); 
@@ -1541,7 +1572,7 @@ function client() {
       //reset the cursor to the top left
       process.stdout.write('\x1b[1;1H')
     }
-    render_chat() {
+    render_chat(privileged=false) {
       //move the cursor below the map
       readline.cursorTo(process.stdout, 0, this.map_height * (this.tile_size))
       // //this will move the curosr to the bottom right of the terminal
@@ -1552,7 +1583,15 @@ function client() {
       if (this.player.damaged) color = '\x1b[38;5;196m'
       console.log(color + this.render_health(this.player.health) + this.COLORS.reset);
 
-      this.chat_log.slice(-this.chat_height).forEach(message => console.log(message + '                        '))
+      this.chat_log.slice(-this.chat_height).forEach(msg_func => msg_func())
+
+      if (this.is_premium_running && !privileged) return
+      //the following codeblock should only execute once
+      this.is_premium_running = true
+      setTimeout(() => {
+        this.update_premium_hue()
+        if (this.state === 'ingame') this.render_chat(true)
+      }, 250)
       //temporarly remove the scoreboard, it messes with the chat size
       // console.table(this.scoreboard);
       // this.draw_border()
