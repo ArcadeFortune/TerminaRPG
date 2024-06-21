@@ -970,9 +970,11 @@ function client() {
           process.stdout.on('resize', this.client.refresh_map)
         },
         refresh_map: () => {
-          //it should only refresh the map the user is currently using the default settings
-          if (this.client.socket) this.client.send({}, 'map')
-          // if (this.client.socket && this.default_screen_size) this.client.send({}, 'map')
+          //check if the new screen size needs a new tile size (too small or big enough)
+          if (this.reevaluate_tile_size(this.map_width, this.map_height) !== this.tile_size) {
+            //then ask for the whole map again, because we cannot save the whole map locally
+            if (this.client.socket) this.client.send({}, 'map');
+          };
         },
         close: (reason) => {
           if (this.client.socket) {
@@ -1437,7 +1439,12 @@ function client() {
      * @returns
      */
     render(map) {
-      //before rendering, determine the tile size
+      
+      //save map metadata locally
+      this.map_height = map.length
+      this.map_width = map[0].length
+
+      //determine the tile size
       this.tile_size = this.reevaluate_tile_size(map[0].length, map.length)
       if (this.tile_size < 1) {
         this.client.close()
@@ -1455,14 +1462,9 @@ function client() {
           row += this.process_char(map[i][j]).repeat(this.tile_size + 1)
         }
         for (let k = 0; k < this.tile_size; k++) {
-          process.stdout.write(row + '\r\n')
+          process.stdout.write(row + '\x1b[48;5;0m \n')
         }
       }
-      console.log(this.COLORS.reset);
-
-      //save the map data locally
-      this.map_height = map.length
-      this.map_width = map[0].length
     }
     /**
      * changes one or more pixels on the screen depending on the data
@@ -1496,19 +1498,18 @@ function client() {
      * @returns {Number} the new tile size
      */
     reevaluate_tile_size(map_width, map_height) {
-      //lots of maths
       //if the screen is using the default size      
       if (this.default_screen_size) {
         //automatically update the screen width to reflect the new terminal window size
-        this.screen_width = process.stdout.columns
+        this.screen_width = process.stdout.columns - 3
         this.screen_height = process.stdout.rows - this.chat_height
       }
       //but if the terminal window is smaller than the user defined screen size
       else if (this.screen_width > process.stdout.columns || this.screen_height + this.chat_height > process.stdout.rows ) {
         return 0
       }
+      //lots of maths
       return Math.floor(Math.min(this.screen_width / map_width - 1, this.screen_height / map_height))
-      // return Math.floor(Math.min(process.stdout.columns / map_width - 1, process.stdout.rows / map_height))
     }
     /**
      * draws border around the screen
