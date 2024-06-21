@@ -1,7 +1,10 @@
 await import ('node:process');
 const net = await import('node:net')
 const http = await import('node:http')
+
+const repl = await import('node:repl'); 
 const dgram = await import('node:dgram');
+
 const readline = await import('node:readline');
 const { EventEmitter } = await import('node:events');
 
@@ -16,6 +19,7 @@ process.on('exit', () => {
 })
 
 //#region global variables
+const SERVER_ONLY = process.argv.length >= 3
 const DEFAULT_GAME_SERVER_PORT = 49152
 const MULTICAST_ADDRESS = '224.69.69.69'
 const INVINCIBILITY_FRAMES = 300
@@ -37,17 +41,6 @@ const rl = readline.createInterface({
  * @returns a function to stop the server
  */
 function server(cb_on_server_start=()=>{}) {
-  
-  //smol server
-  const PORT = process.env.PORT || 3000
-  http.createServer((req, res) => {
-    res.statusCode = 200;
-    res.setHeader('Content-Type', 'text/plain');
-    res.end('Hello World\n');
-  }).listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}/`);
-  });
-
   const MAP_WIDTH = 30
   const MAP_HEIGHT = 10
   const PLAYER_RENDER_DISTANCE = 7
@@ -715,6 +708,15 @@ function server(cb_on_server_start=()=>{}) {
   //#endregion
   
   console.clear()
+
+  //start cli
+  setTimeout(() => {
+    if (SERVER_ONLY) {
+      const r = repl.start('> ')
+      r.context.game = game
+      r.context.server = server
+    }
+  }, 10)
 
   //return a function to stop the server
   return () => {
@@ -1561,7 +1563,7 @@ function client() {
 }
 
 
-if (process.argv.length >= 3) {
+if (SERVER_ONLY) {
   server()
 } else {
   client()
