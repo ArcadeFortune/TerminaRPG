@@ -37,6 +37,17 @@ const rl = readline.createInterface({
  * @returns a function to stop the server
  */
 function server(cb_on_server_start=()=>{}) {
+  
+  //smol server
+  const PORT = process.env.PORT || 3000
+  http.createServer((req, res) => {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/plain');
+    res.end('Hello World\n');
+  }).listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}/`);
+  });
+
   const MAP_WIDTH = 30
   const MAP_HEIGHT = 10
   const PLAYER_RENDER_DISTANCE = 7
